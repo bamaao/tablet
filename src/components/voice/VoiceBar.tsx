@@ -1,0 +1,297 @@
+/**
+ * VoiceBar Component
+ *
+ * Bottom voice interaction bar with microphone button and transcript display.
+ * Always visible at the bottom of the screen for voice-first interaction.
+ */
+
+import React, {useState, useEffect, useCallback} from 'react';
+import {
+  View,
+  StyleSheet,
+  Pressable,
+  Animated,
+} from 'react-native';
+import {IconButton, Text, useTheme} from 'react-native-paper';
+import {useAppDispatch, useAppSelector} from '@/store/hooks';
+import {
+  startListening,
+  stopListening,
+  updateTranscript,
+  setCommand,
+  setError,
+} from '@/store/slices/voiceSlice';
+import {parseVoiceCommand} from '@/utils/voice/CommandParser';
+import {VoiceService} from '@/services/VoiceService';
+import {TTSService} from '@/services/TTSService';
+
+export const VoiceBar: React.FC = () => {
+  const theme = useTheme();
+  const dispatch = useDispatch();
+
+  const isListening = useAppSelector(selectIsListening);
+  const transcript = useAppSelector(selectTranscript);
+  const permissionGranted = useAppSelector(selectPermissionGranted);
+
+  const [pulseAnim] = useState(new Animated.Value(1));
+
+  // Handle microphone button press
+  const handleMicPress = useCallback(async () => {
+    if (isListening) {
+      // Stop listening
+      await VoiceService.stop();
+      dispatch(stopListening());
+    } else {
+      // Check permission first
+      const hasPermission = await VoiceService.hasPermission();
+      if (!hasPermission) {
+        const granted = await VoiceService.requestPermission();
+        if (!granted) {
+          dispatch(setError('需要麦克风权限才能使用语音功能'));
+          return;
+        }
+      }
+
+      // Start listening
+      try {
+        await VoiceService.start();
+        dispatch(startListening());
+      } catch (error) {
+        dispatch(setError((error as Error).message));
+      }
+    }
+  }, [isListening, dispatch]);
+
+  // Animate pulse when listening
+  useEffect(() => {
+    if (isListening) {
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.2,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+        ]),
+      );
+      pulse.start();
+
+      return () => {
+        pulse.stop();
+      };
+    }
+  }, [isListening, pulseAnim]);
+
+  // Listen to voice service events
+  useEffect(() => {
+    const handlePartial = (text: string) => {
+      dispatch(updateTranscript(text));
+    };
+
+    const handleRecognized = async (text: string) => {
+      dispatch(updateTranscript(text));
+      dispatch(stopListening());
+
+      // Parse the command
+      const result = parseVoiceCommand(text);
+
+      if (result.success && result.command) {
+        dispatch(setCommand(result.command));
+
+        // Speak confirmation
+        try {
+          await TTSService.speak(`已识别：${text}`);
+        } catch (error) {
+          console.error('TTS error:', error);
+        }
+      } else {
+        dispatch(setError(result.error || '无法识别命令'));
+      }
+    };
+
+    const handleError = (error: Error) => {
+      dispatch(setError(error.message));
+      dispatch(stopListening());
+    };
+
+    VoiceService.on('partial', handlePartial);
+    VoiceService.on('recognized', handleRecognized);
+    VoiceService.on('error', handleError);
+
+    return () => {
+      VoiceService.off('partial', handlePartial);
+      VoiceService.off('recognized', handleRecognized);
+      VoiceService.off('error', handleError);
+    };
+  }, [dispatch]);
+
+  return (
+    <View style={[styles.container, {backgroundColor: theme.colors.surface}]}>
+      {/* Transcript Display */}
+      <View style={styles.transcriptContainer}>
+        {transcript ? (
+          <Text variant="bodyLarge" style={styles.transcript}>
+            {transcript}
+          </Text>
+        ) : (
+          <Text variant="bodyMedium" style={styles.placeholder}>
+            点击麦克风说话...
+          </Text>
+        )}
+      </View>
+
+      {/* Mic Button */}
+      <View style={styles.buttonContainer}>
+        {isListening && (
+          <>
+            {/* Pulsing background */}
+            <Animated.View
+              style={[
+                styles.pulseBackground,
+                {
+                  backgroundColor: theme.colors.primary + '40',
+                  transform: [{scale: pulseAnim}],
+                },
+              ]}
+            />
+
+            {/* Ripple effects */}
+            <View style={styles.ripple} />
+            <View style={[styles.ripple, styles.ripple2]} />
+          </>
+        )}
+
+        <Pressable
+          onPress={handleMicPress}
+          style={({pressed}) => [
+            styles.micButton,
+            {
+              backgroundColor: isListening
+                ? theme.colors.error
+                : theme.colors.primaryContainer,
+            },
+            pressed && styles.pressed,
+          ]}
+          accessibilityLabel={isListening ? '停止录音' : '开始录音'}
+          accessibilityRole="button">
+          <IconButton
+            icon={isListening ? 'microphone-off' : 'microphone'}
+            size={32}
+            iconColor={isListening ? '#FFFFFF' : theme.colors.primary}
+            style={styles.micIcon}
+          />
+        </Pressable>
+      </View>
+
+      {/* Status indicator */}
+      {isListening && (
+        <View style={styles.statusContainer}>
+          <View style={[styles.statusDot, {backgroundColor: theme.colors.error}]} />
+          <Text variant="labelSmall" style={styles.statusText}>
+            正在录音...
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+};
+
+const useDispatch = require('@/store/hooks').useAppDispatch;
+const selectIsListening = (state: {voice: {isListening: boolean}}) => state.voice.isListening;
+const selectTranscript = (state: {voice: {transcript: string}}) => state.voice.transcript;
+const selectPermissionGranted = (state: {voice: {permissionGranted: boolean}}) =>
+  state.voice.permissionGranted;
+
+const styles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: -2},
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+  },
+  transcriptContainer: {
+    flex: 1,
+    marginRight: 16,
+    justifyContent: 'center',
+    minHeight: 40,
+  },
+  transcript: {
+    color: '#000',
+  },
+  placeholder: {
+    color: '#999',
+  },
+  buttonContainer: {
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pulseBackground: {
+    position: 'absolute',
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+  },
+  ripple: {
+    position: 'absolute',
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 0, 0, 0.3)',
+  },
+  ripple2: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 0, 0, 0.2)',
+  },
+  micButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pressed: {
+    opacity: 0.7,
+    transform: [{scale: 0.95}],
+  },
+  micIcon: {
+    margin: 0,
+  },
+  statusContainer: {
+    position: 'absolute',
+    top: -8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  statusText: {
+    color: '#666',
+  },
+});

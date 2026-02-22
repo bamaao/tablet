@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(npx react-native@latest init:*)",
+      "Bash(npx @react-native-community/cli init:*)",
+      "Bash(npm install:*)",
+      "Bash(npm view:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}
