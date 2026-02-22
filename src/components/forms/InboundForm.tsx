@@ -2,7 +2,7 @@
  * InboundForm Component
  *
  * Form for recording stock incoming (入库) operations.
- * Allows user to input quantity and select unit.
+ * Supports both packaged and loose stock entry.
  */
 
 import React, {useState} from 'react';
@@ -12,25 +12,35 @@ import {
   Button,
   Text,
   Divider,
-  useTheme,
+  SegmentedButtons,
 } from 'react-native-paper';
 import {ScrollView} from 'react-native-gesture-handler';
 import {useAppDispatch, useAppSelector} from '@/store/hooks';
 import {executeTransaction, selectSelectedMedicine} from '@/store/slices/inventorySlice';
-import {TransactionType, UnitType, Medicine} from '@/types';
+import {TransactionType, UnitType} from '@/types';
 import {UnitSelector} from '@/components/inventory/UnitSelector';
 import {showToast} from '@/store/slices/uiSlice';
 
 export const InboundForm: React.FC = () => {
-  const theme = useTheme();
   const dispatch = useAppDispatch();
-
   const selectedMedicine = useAppSelector(selectSelectedMedicine);
   const loading = useAppSelector(selectInventoryLoading);
 
   const [quantity, setQuantity] = useState('0');
-  const [unit, setUnit] = useState<UnitType>('包');
+  const [stockType, setStockType] = useState<'packaged' | 'loose'>('loose');
+  const [unit, setUnit] = useState<UnitType>('g');
   const [notes, setNotes] = useState('');
+
+  // Update unit based on stock type
+  React.useEffect(() => {
+    if (selectedMedicine) {
+      if (stockType === 'packaged') {
+        setUnit(selectedMedicine.packageUnit as UnitType);
+      } else {
+        setUnit(selectedMedicine.baseUnit as UnitType);
+      }
+    }
+  }, [stockType, selectedMedicine]);
 
   // Validate form
   const isValid = selectedMedicine && parseFloat(quantity) > 0;
@@ -46,25 +56,20 @@ export const InboundForm: React.FC = () => {
           type: TransactionType.INBOUND,
           quantity: parseFloat(quantity),
           unit,
-          notes,
+          notes: `${stockType === 'packaged' ? '包装' : '散装'}入库 - ${notes}`,
         }),
       ).unwrap();
 
-      // Show success message
       dispatch(
         showToast(`已入库 ${selectedMedicine.name} ${quantity}${unit}`),
       );
 
-      // Reset form
       setQuantity('0');
       setNotes('');
     } catch (error) {
       dispatch(showError((error as Error).message));
     }
   };
-
-  // Quick quantity buttons
-  const quickQuantities = ['1', '5', '10'];
 
   if (!selectedMedicine) {
     return (
@@ -75,6 +80,8 @@ export const InboundForm: React.FC = () => {
       </View>
     );
   }
+
+  const quickQuantities = stockType === 'packaged' ? ['1', '5', '10'] : ['100', '500', '1000'];
 
   return (
     <KeyboardAvoidingView
@@ -93,11 +100,30 @@ export const InboundForm: React.FC = () => {
             规格: {selectedMedicine.packageSize}{selectedMedicine.baseUnit}/{selectedMedicine.packageUnit}
           </Text>
           <Text variant="bodyMedium" style={styles.sectionSubtitle}>
-            当前库存: {selectedMedicine.displayStock}
+            当前库存 - 包装: {selectedMedicine.packagedStock}{selectedMedicine.packageUnit}
+          </Text>
+          <Text variant="bodyMedium} style={styles.sectionSubtitle}>
+            当前库存 - 散装: {selectedMedicine.looseStock}{selectedMedicine.baseUnit}
           </Text>
         </View>
 
         <Divider />
+
+        {/* Stock Type Selection */}
+        <View style={styles.section}>
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            入库类型
+          </Text>
+          <SegmentedButtons
+            value={stockType}
+            onValueChange={(value) => setStockType(value as 'packaged' | 'loose')}
+            buttons={[
+              {label: '散装入库', value: 'loose'},
+              {label: '包装入库', value: 'packaged'},
+            ]}
+            style={styles.segmentedButtons}
+          />
+        </View>
 
         {/* Quantity Input */}
         <View style={styles.section}>
@@ -130,12 +156,16 @@ export const InboundForm: React.FC = () => {
           </View>
         </View>
 
-        {/* Unit Selector */}
+        {/* Unit Display (auto-selected based on stock type) */}
         <View style={styles.section}>
           <Text variant="titleMedium" style={styles.sectionTitle}>
-            单位
+            单位: {unit}
           </Text>
-          <UnitSelector value={unit} onChange={setUnit} />
+          <Text variant="bodyMedium" style={styles.unitInfo}>
+            {stockType === 'packaged'
+              ? `每包${selectedMedicine.packageSize}${selectedMedicine.baseUnit}`
+              : `散装单位`}
+          </Text>
         </View>
 
         {/* Notes */}
@@ -168,6 +198,7 @@ export const InboundForm: React.FC = () => {
 
 const selectInventoryLoading = (state: {inventory: {loading: boolean}}) =>
   state.inventory.loading;
+
 const showError = (message: string) => ({
   type: 'ui/showError',
   payload: {title: '错误', message},
@@ -204,6 +235,9 @@ const styles = StyleSheet.create({
     color: '#666',
     marginBottom: 4,
   },
+  segmentedButtons: {
+    marginBottom: 16,
+  },
   input: {
     marginBottom: 8,
   },
@@ -214,6 +248,9 @@ const styles = StyleSheet.create({
   },
   quickButton: {
     flex: 1,
+  },
+  unitInfo: {
+    color: '#666',
   },
   submitButton: {
     marginTop: 8,

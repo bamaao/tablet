@@ -2,7 +2,7 @@
  * OutboundForm Component
  *
  * Form for recording stock outbound (出库) operations.
- * Validates stock availability before allowing outbound.
+ * Supports both packaged and loose stock removal with proper validation.
  */
 
 import React, {useState, useEffect} from 'react';
@@ -12,14 +12,14 @@ import {
   Button,
   Text,
   Divider,
-  useTheme,
+  SegmentedButtons,
   ProgressBar,
+  useTheme,
 } from 'react-native-paper';
 import {ScrollView} from 'react-native-gesture-handler';
 import {useAppDispatch, useAppSelector} from '@/store/hooks';
 import {executeTransaction, selectSelectedMedicine} from '@/store/slices/inventorySlice';
 import {TransactionType, UnitType} from '@/types';
-import {UnitSelector} from '@/components/inventory/UnitSelector';
 import {convertToBaseUnits, convertFromBaseUnits} from '@/utils/conversion/UnitConverter';
 
 export const OutboundForm: React.FC = () => {
@@ -30,8 +30,21 @@ export const OutboundForm: React.FC = () => {
   const loading = useAppSelector(selectInventoryLoading);
 
   const [quantity, setQuantity] = useState('0');
+  const [stockType, setStockType] = useState<'packaged' | 'loose'>('loose');
   const [unit, setUnit] = useState<UnitType>('g');
   const [notes, setNotes] = useState('');
+
+  // Update unit based on stock type
+  useEffect(() => {
+    if (selectedMedicine) {
+      if (stockType === 'packaged') {
+        setUnit(selectedMedicine.packageUnit as UnitType);
+      } else {
+        setUnit(selectedMedicine.baseUnit as UnitType);
+      }
+      setQuantity('0'); // Reset quantity when changing type
+    }
+  }, [stockType, selectedMedicine]);
 
   // Calculate stock availability
   const [stockAvailable, setStockAvailable] = useState(true);
@@ -41,15 +54,23 @@ export const OutboundForm: React.FC = () => {
     if (selectedMedicine && quantity) {
       const qty = parseFloat(quantity);
       if (qty > 0) {
-        const required = convertToBaseUnits(qty, unit, selectedMedicine.packageSize);
-        setRequiredStock(required);
-        setStockAvailable(selectedMedicine.currentStock >= required);
+        const baseQty = convertToBaseUnits(qty, unit, selectedMedicine.packageSize);
+
+        if (stockType === 'packaged') {
+          // Check packaged stock availability
+          setStockAvailable(selectedMedicine.packagedStock >= qty);
+          setRequiredStock(qty); // Package count
+        } else {
+          // Check loose stock availability
+          setStockAvailable(selectedMedicine.looseStock >= baseQty);
+          setRequiredStock(baseQty); // Base units
+        }
       } else {
-        setRequiredStock(0);
         setStockAvailable(true);
+        setRequiredStock(0);
       }
     }
-  }, [selectedMedicine, quantity, unit]);
+  }, [selectedMedicine, quantity, unit, stockType]);
 
   // Validate form
   const isValid = selectedMedicine && parseFloat(quantity) > 0 && stockAvailable;
@@ -65,7 +86,7 @@ export const OutboundForm: React.FC = () => {
           type: TransactionType.OUTBOUND,
           quantity: parseFloat(quantity),
           unit,
-          notes,
+          notes: `${stockType === 'packaged' ? '包装' : '散装'}出库 - ${notes}`,
         }),
       ).unwrap();
 
@@ -80,17 +101,6 @@ export const OutboundForm: React.FC = () => {
     }
   };
 
-  // Quick quantity buttons (based on current stock)
-  const getQuickQuantities = () => {
-    if (!selectedMedicine) return [];
-    const stockG = convertFromBaseUnits(selectedMedicine.currentStock, 'g');
-    const values = [];
-    if (stockG >= 100) values.push('100');
-    if (stockG >= 50) values.push('50');
-    if (stockG >= 10) values.push('10');
-    return values.length > 0 ? values : ['5'];
-  };
-
   if (!selectedMedicine) {
     return (
       <View style={styles.emptyContainer}>
@@ -101,10 +111,21 @@ export const OutboundForm: React.FC = () => {
     );
   }
 
-  const quickQuantities = getQuickQuantities();
-  const stockPercentage = selectedMedicine.currentStock
-    ? (Math.min(requiredStock, selectedMedicine.currentStock) / selectedMedicine.currentStock) * 100
-    : 0;
+  const currentStock = stockType === 'packaged'
+    ? selectedMedicine.packagedStock
+    : selectedMedicine.looseStock;
+
+  const currentStockDisplay = stockType === 'packaged'
+    ? `${selectedMedicine.packagedStock}${selectedMedicine.packageUnit}`
+    : `${selectedMedicine.looseStock}${selectedMedicine.baseUnit}`;
+
+  const quickQuantities = stockType === 'packaged'
+    ? selectedMedicine.packagedStock > 0
+      ? ['1', '2', '5'].filter(q => parseInt(q) <= selectedMedicine.packagedStock)
+      : ['1']
+    : selectedMedicine.looseStock >= 1000
+    ? ['100', '500', '1000']
+    : ['50', '100', '200'];
 
   return (
     <KeyboardAvoidingView
@@ -120,16 +141,52 @@ export const OutboundForm: React.FC = () => {
             {selectedMedicine.name}
           </Text>
           <Text variant="bodyMedium" style={styles.sectionSubtitle}>
-            当前库存: {selectedMedicine.displayStock}
+            规格: {selectedMedicine.packageSize}{selectedMedicine.baseUnit}/{selectedMedicine.packageUnit}
           </Text>
+          <View style={styles.stockInfoRow}>
+            <Text variant="bodyMedium} style={styles.stockLabel}>
+              包装库存: {selectedMedicine.packagedStock}{selectedMedicine.packageUnit}
+            </Text>
+            <Text variant="bodyMedium" style={styles.stockLabel}>
+              散装库存: {selectedMedicine.looseStock}{selectedMedicine.baseUnit}
+            </Text>
+          </View>
         </View>
 
         <Divider />
+
+        {/* Stock Type Selection */}
+        <View style={styles.section}>
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            出库类型
+          </Text>
+          <SegmentedButtons
+            value={stockType}
+            onValueChange={(value) => setStockType(value as 'packaged' | 'loose')}
+            buttons={[
+              {
+                label: `散装出库`,
+                value: 'loose',
+                disabled: selectedMedicine.looseStock === 0,
+              },
+              {
+                label: `包装出库`,
+                value: 'packaged',
+                disabled: selectedMedicine.packagedStock === 0,
+              },
+            ]}
+            style={styles.segmentedButtons}
+          />
+        </View>
 
         {/* Quantity Input */}
         <View style={styles.section}>
           <Text variant="titleMedium" style={styles.sectionTitle}>
             出库数量
+          </Text>
+
+          <Text variant="bodySmall" style={styles.availableStock}>
+            当前可用: {currentStockDisplay}
           </Text>
 
           <TextInput
@@ -139,13 +196,13 @@ export const OutboundForm: React.FC = () => {
             label="数量"
             mode="outlined"
             style={styles.input}
-            error={!stockAvailable}
+            error={!stockAvailable && quantity !== '0'}
             autoFocus
           />
 
           {/* Quick Quantity Buttons */}
           <View style={styles.quickButtons}>
-            {quickQuantities.map(q => (
+            {quickQuantities.slice(0, 3).map(q => (
               <Button
                 key={q}
                 mode="outlined"
@@ -161,36 +218,26 @@ export const OutboundForm: React.FC = () => {
           {quantity && !stockAvailable && (
             <View style={styles.warningContainer}>
               <Text style={styles.warningText}>
-                库存不足！当前: {selectedMedicine.currentStock}g，需要: {requiredStock}g
+                {stockType === 'packaged'
+                  ? `包装库存不足！当前只有 ${selectedMedicine.packagedStock} 包`
+                  : `散装库存不足！当前只有 ${selectedMedicine.looseStock} ${selectedMedicine.baseUnit}`
+                }
               </Text>
-            </View>
-          )}
-
-          {/* Stock Progress Bar */}
-          {quantity && stockAvailable && requiredStock > 0 && (
-            <View style={styles.progressContainer}>
-              <View style={styles.progressHeader}>
-                <Text variant="bodySmall" style={styles.progressLabel}>
-                  库存占用
-                </Text>
-                <Text variant="bodySmall" style={styles.progressValue}>
-                  {stockPercentage.toFixed(1)}%
-                </Text>
-              </View>
-              <ProgressBar
-                progress={Math.min(stockPercentage / 100, 1)}
-                color={stockPercentage > 80 ? theme.colors.error : theme.colors.primary}
-              />
             </View>
           )}
         </View>
 
-        {/* Unit Selector */}
+        {/* Unit Display */}
         <View style={styles.section}>
           <Text variant="titleMedium" style={styles.sectionTitle}>
-            单位
+            单位: {unit}
           </Text>
-          <UnitSelector value={unit} onChange={setUnit} />
+          <Text variant="bodyMedium} style={styles.unitInfo}>
+            {stockType === 'packaged'
+              ? `每包${selectedMedicine.packageSize}${selectedMedicine.baseUnit}`
+              : `散装单位`
+            }
+          </Text>
         </View>
 
         {/* Notes */}
@@ -266,6 +313,20 @@ const styles = StyleSheet.create({
     color: '#666',
     marginBottom: 4,
   },
+  stockInfoRow: {
+    gap: 4,
+  },
+  stockLabel: {
+    color: '#666',
+  },
+  segmentedButtons: {
+    marginBottom: 16,
+  },
+  availableStock: {
+    color: '#00695C',
+    marginBottom: 8,
+    fontWeight: '500',
+  },
   input: {
     marginBottom: 8,
   },
@@ -289,18 +350,7 @@ const styles = StyleSheet.create({
     color: '#D32F2F',
     fontSize: 12,
   },
-  progressContainer: {
-    marginTop: 12,
-  },
-  progressHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  progressLabel: {
-    color: '#666',
-  },
-  progressValue: {
+  unitInfo: {
     color: '#666',
   },
   submitButton: {

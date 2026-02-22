@@ -6,7 +6,8 @@
       "Bash(npx @react-native-community/cli init:*)",
       "Bash(npm install:*)",
       "Bash(npm view:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

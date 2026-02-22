@@ -146,33 +146,52 @@ export const executeTransaction = createAsyncThunk(
       let newPackagedStock = medicine.packagedStock;
       let finalQuantity = quantityInBaseUnits;
 
+      // Check if unit is a package unit
+      const isPackageUnit = ['包', '盒', '瓶'].includes(payload.unit);
+
       // Calculate new stock based on transaction type
       switch (payload.type) {
         case TransactionType.INBOUND:
-          // Add to loose stock by default (can be modified for package inbound)
-          newLooseStock = medicine.looseStock + quantityInBaseUnits;
+          // Add stock based on unit type
+          if (isPackageUnit) {
+            // Package inbound: increase packaged stock
+            newPackagedStock = medicine.packagedStock + payload.quantity;
+            finalQuantity = payload.quantity * medicine.packageSize; // In base units
+          } else {
+            // Loose inbound: increase loose stock
+            newLooseStock = medicine.looseStock + quantityInBaseUnits;
+          }
           break;
 
         case TransactionType.OUTBOUND:
-          // Deduct from loose stock first, then from packaged if needed
-          if (medicine.looseStock >= quantityInBaseUnits) {
-            newLooseStock = medicine.looseStock - quantityInBaseUnits;
+          // Deduct stock based on unit type
+          if (isPackageUnit) {
+            // Package outbound: decrease packaged stock
+            if (payload.quantity > medicine.packagedStock) {
+              return rejectWithValue(
+                `包装库存不足。需要 ${payload.quantity} 包，当前只有 ${medicine.packagedStock} 包`
+              );
+            }
+            newPackagedStock = medicine.packagedStock - payload.quantity;
+            finalQuantity = payload.quantity * medicine.packageSize;
           } else {
-            const remaining = quantityInBaseUnits - medicine.looseStock;
-            const packagesToUse = Math.ceil(remaining / medicine.packageSize);
-            newPackagedStock = Math.max(0, medicine.packagedStock - packagesToUse);
-            newLooseStock = 0;
-            finalQuantity = quantityInBaseUnits; // Actual deducted amount
+            // Loose outbound: decrease loose stock
+            if (quantityInBaseUnits > medicine.looseStock) {
+              return rejectWithValue(
+                `散装库存不足。需要 ${quantityInBaseUnits} ${medicine.baseUnit}，当前只有 ${medicine.looseStock} ${medicine.baseUnit}`
+              );
+            }
+            newLooseStock = medicine.looseStock - quantityInBaseUnits;
           }
           break;
 
         case TransactionType.UNPACK:
-          // Convert packages to loose
+          // Convert packages to loose (unpack operation)
           const packagesToUnpack = Math.floor(payload.quantity);
           const unpackedAmount = packagesToUnpack * medicine.packageSize;
 
           if (packagesToUnpack > medicine.packagedStock) {
-            return rejectWithValue('Not enough packaged stock to unpack');
+            return rejectWithValue('包装库存不足，无法拆包');
           }
 
           newPackagedStock = medicine.packagedStock - packagesToUnpack;
