@@ -5,9 +5,7 @@
  */
 
 import {createSlice, createAsyncThunk, PayloadAction} from '@reduxjs/toolkit';
-import {database} from '@/database';
-import {AuditRecord} from '@/database/models/AuditRecord';
-import {AuditSession as AuditSessionModel} from '@/database/models/AuditSession';
+import {getDatabase} from '@/database';
 import {AuditState, AuditRecord as AuditRecordType, AuditSession as AuditSessionType} from '@/types';
 import Q from '@nozbe/watermelondb/Query';
 
@@ -33,7 +31,8 @@ export const startAuditSession = createAsyncThunk(
   'audit/startSession',
   async (medicineIds: string[], {rejectWithValue}) => {
     try {
-      const sessionsCollection = database.get<AuditSessionModel>('audit_sessions');
+      const database = getDatabase();
+      const sessionsCollection = database.get<any>('audit_sessions');
 
       const session = await sessionsCollection.create(s => {
         s.startedAt = new Date();
@@ -74,7 +73,8 @@ export const recordAuditEntry = createAsyncThunk(
     {rejectWithValue},
   ) => {
     try {
-      const recordsCollection = database.get<AuditRecord>('audit_records');
+      const database = getDatabase();
+      const recordsCollection = database.get<any>('audit_records');
       const medicinesCollection = database.get('medicines');
 
       const medicine = await medicinesCollection.find(payload.medicineId);
@@ -135,7 +135,8 @@ export const loadAuditRecords = createAsyncThunk(
   'audit/loadRecords',
   async (sessionId: string, {rejectWithValue}) => {
     try {
-      const recordsCollection = database.get<AuditRecord>('audit_records');
+      const database = getDatabase();
+      const recordsCollection = database.get<any>('audit_records');
       const records = await recordsCollection
         .query(Q.where('session_id', sessionId))
         .fetch();
@@ -166,7 +167,8 @@ export const completeAuditSession = createAsyncThunk(
   'audit/completeSession',
   async (sessionId: string, {rejectWithValue}) => {
     try {
-      const sessionsCollection = database.get<AuditSessionModel>('audit_sessions');
+      const database = getDatabase();
+      const sessionsCollection = database.get<any>('audit_sessions');
       const session = await sessionsCollection.find(sessionId);
 
       await session.update(s => {
@@ -275,13 +277,13 @@ export const {setCurrentRecord, clearSession} = auditSlice.actions;
 // SELECTORS
 // ============================================================================
 
-export const selectCurrentSession = (state: {audit: AuditState}) => state.audit.currentSession;
-export const selectCurrentRecord = (state: {audit: AuditState}) => state.audit.currentRecord;
-export const selectDiscrepancies = (state: {audit: AuditState}) => state.audit.discrepancies;
-export const selectAuditLoading = (state: {audit: AuditState}) => state.audit.loading;
+export const selectCurrentSession = (state: any) => state?.audit?.currentSession || null;
+export const selectCurrentRecord = (state: any) => state?.audit?.currentRecord || null;
+export const selectDiscrepancies = (state: any) => state?.audit?.discrepancies || [];
+export const selectAuditLoading = (state: any) => state?.audit?.loading || false;
 
-export const selectTotalDiscrepancy = (state: {audit: AuditState}) =>
-  state.audit.discrepancies.reduce((sum, r) => sum + r.discrepancy, 0);
+export const selectTotalDiscrepancy = (state: any) =>
+  (state?.audit?.discrepancies || []).reduce((sum, r) => sum + r.discrepancy, 0);
 
 // ============================================================================
 // REDUCER
