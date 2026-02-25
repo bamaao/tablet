@@ -417,6 +417,9 @@ export const OutboundForm: React.FC = () => {
             multiline
             numberOfLines={3}
             style={styles.input}
+            keyboardType="default"
+            autoCorrect={true}
+            autoCapitalize="sentences"
           />
         </View>
 

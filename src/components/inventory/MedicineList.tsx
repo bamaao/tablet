@@ -12,7 +12,7 @@ import {FlashList} from '@shopify/flash-list';
 import {Medicine as MedicineType, MedicineCategory} from '@/types';
 import {MedicineCard} from './MedicineCard';
 import {useAppDispatch, useAppSelector} from '@/store/hooks';
-import {searchMedicines, selectMedicine} from '@/store/slices/inventorySlice';
+import {searchMedicines, selectMedicine, selectMedicines, selectInventoryLoading} from '@/store/slices/inventorySlice';
 
 interface MedicineListProps {
   /**
@@ -37,14 +37,14 @@ export const MedicineList: React.FC<MedicineListProps> = ({
   showLowStockOnly = false,
 }) => {
   const dispatch = useAppDispatch();
-  const medicines = useAppSelector(selectMedicinesSorted);
+  const medicines = useAppSelector(selectMedicines);
   const loading = useAppSelector(selectInventoryLoading);
 
   const [searchQuery, setSearchQuery] = useState(initialQuery);
 
   // Filter medicines based on props
   const filteredMedicines = React.useMemo(() => {
-    let result = medicines;
+    let result = medicines || [];
 
     if (showLowStockOnly) {
       result = result.filter(m => m.currentStock < m.minStock);
@@ -111,6 +111,8 @@ export const MedicineList: React.FC<MedicineListProps> = ({
         value={searchQuery}
         onChangeText={setSearchQuery}
         style={styles.searchbar}
+        autoCorrect={true}
+        autoCapitalize="sentences"
       />
 
       {filteredMedicines.length === 0 ? (
@@ -140,12 +142,6 @@ export const MedicineList: React.FC<MedicineListProps> = ({
     </View>
   );
 };
-
-const selectMedicinesSorted = (state: {inventory: {medicines: MedicineType[]}}) =>
-  [...state.inventory.medicines].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
-
-const selectInventoryLoading = (state: {inventory: {loading: boolean}}) =>
-  state.inventory.loading;
 
 const styles = StyleSheet.create({
   container: {

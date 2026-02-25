@@ -16,10 +16,10 @@ import {
 } from 'react-native-paper';
 import {ScrollView} from 'react-native-gesture-handler';
 import {useAppDispatch, useAppSelector} from '@/store/hooks';
-import {executeTransaction, selectSelectedMedicine} from '@/store/slices/inventorySlice';
+import {executeTransaction, selectSelectedMedicine, selectInventoryLoading} from '@/store/slices/inventorySlice';
 import {TransactionType, UnitType} from '@/types';
 import {UnitSelector} from '@/components/inventory/UnitSelector';
-import {showToast} from '@/store/slices/uiSlice';
+import {showToast, showError} from '@/store/slices/uiSlice';
 
 export const InboundForm: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -29,6 +29,7 @@ export const InboundForm: React.FC = () => {
   const [quantity, setQuantity] = useState('0');
   const [stockType, setStockType] = useState<'packaged' | 'loose'>('loose');
   const [unit, setUnit] = useState<UnitType>('g');
+  const [packageSize, setPackageSize] = useState<string>(''); // Package size in grams
   const [notes, setNotes] = useState('');
 
   // Update unit based on stock type
@@ -36,11 +37,15 @@ export const InboundForm: React.FC = () => {
     if (selectedMedicine) {
       if (stockType === 'packaged') {
         setUnit(selectedMedicine.packageUnit as UnitType);
+        // Initialize packageSize with medicine default if empty
+        if (!packageSize) {
+          setPackageSize(String(selectedMedicine.packageSize));
+        }
       } else {
         setUnit(selectedMedicine.baseUnit as UnitType);
       }
     }
-  }, [stockType, selectedMedicine]);
+  }, [stockType, selectedMedicine, packageSize]);
 
   // Validate form
   const isValid = selectedMedicine && parseFloat(quantity) > 0;
@@ -50,18 +55,27 @@ export const InboundForm: React.FC = () => {
     if (!isValid || !selectedMedicine) return;
 
     try {
-      await dispatch(
-        executeTransaction({
-          medicineId: selectedMedicine.id,
-          type: TransactionType.INBOUND,
-          quantity: parseFloat(quantity),
-          unit,
-          notes: `${stockType === 'packaged' ? '包装' : '散装'}入库 - ${notes}`,
-        }),
-      ).unwrap();
+      const txnParams: any = {
+        medicineId: selectedMedicine.id,
+        type: TransactionType.INBOUND,
+        quantity: parseFloat(quantity),
+        unit,
+        notes: `${stockType === 'packaged' ? '包装' : '散装'}入库 - ${notes}`,
+      };
+
+      // Add packageSize for packaged units
+      if (stockType === 'packaged' && packageSize) {
+        txnParams.packageSize = parseFloat(packageSize);
+      }
+
+      await dispatch(executeTransaction(txnParams)).unwrap();
+
+      const totalDisplay = stockType === 'packaged'
+        ? `${quantity}包 × ${packageSize}${selectedMedicine.baseUnit} = ${parseFloat(quantity) * parseFloat(packageSize)}${selectedMedicine.baseUnit}`
+        : `${quantity}${unit}`;
 
       dispatch(
-        showToast(`已入库 ${selectedMedicine.name} ${quantity}${unit}`),
+        showToast(`已入库 ${selectedMedicine.name} ${totalDisplay}`),
       );
 
       setQuantity('0');
@@ -81,7 +95,7 @@ export const InboundForm: React.FC = () => {
     );
   }
 
-  const quickQuantities = stockType === 'packaged' ? ['1', '5', '10'] : ['100', '500', '1000'];
+  const quickQuantities: string[] = stockType === 'packaged' ? ['1', '5', '10'] : ['100', '500', '1000'];
 
   return (
     <KeyboardAvoidingView
@@ -102,7 +116,7 @@ export const InboundForm: React.FC = () => {
           <Text variant="bodyMedium" style={styles.sectionSubtitle}>
             当前库存 - 包装: {selectedMedicine.packagedStock}{selectedMedicine.packageUnit}
           </Text>
-          <Text variant="bodyMedium} style={styles.sectionSubtitle}>
+          <Text variant="bodyMedium" style={styles.sectionSubtitle}>
             当前库存 - 散装: {selectedMedicine.looseStock}{selectedMedicine.baseUnit}
           </Text>
         </View>
@@ -156,6 +170,57 @@ export const InboundForm: React.FC = () => {
           </View>
         </View>
 
+        {/* Package Size Input (only for packaged units) */}
+        {stockType === 'packaged' && (
+          <View style={styles.section}>
+            <Text variant="titleMedium" style={styles.sectionTitle}>
+              包装规格（克/包）
+            </Text>
+
+            <TextInput
+              value={packageSize}
+              onChangeText={setPackageSize}
+              keyboardType="number-pad"
+              label="每包规格"
+              mode="outlined"
+              style={styles.input}
+              placeholder={`默认: ${selectedMedicine.packageSize}`}
+            />
+
+            {/* Quick Package Size Buttons */}
+            <View style={styles.quickButtons}>
+              <Button
+                mode="outlined"
+                onPress={() => setPackageSize(String(selectedMedicine.packageSize))}
+                style={styles.quickButton}
+                compact>
+                默认
+              </Button>
+              <Button
+                mode="outlined"
+                onPress={() => setPackageSize('250')}
+                style={styles.quickButton}
+                compact>
+                250g
+              </Button>
+              <Button
+                mode="outlined"
+                onPress={() => setPackageSize('500')}
+                style={styles.quickButton}
+                compact>
+                500g
+              </Button>
+            </View>
+
+            {/* Calculation Display */}
+            {quantity && packageSize && (
+              <Text variant="bodyMedium" style={styles.calculationText}>
+                共计: {quantity} 包 × {packageSize} {selectedMedicine.baseUnit}/包 = {parseFloat(quantity) * parseFloat(packageSize)} {selectedMedicine.baseUnit}
+              </Text>
+            )}
+          </View>
+        )}
+
         {/* Unit Display (auto-selected based on stock type) */}
         <View style={styles.section}>
           <Text variant="titleMedium" style={styles.sectionTitle}>
@@ -178,6 +243,9 @@ export const InboundForm: React.FC = () => {
             multiline
             numberOfLines={3}
             style={styles.input}
+            keyboardType="default"
+            autoCorrect={true}
+            autoCapitalize="sentences"
           />
         </View>
 
@@ -195,14 +263,6 @@ export const InboundForm: React.FC = () => {
     </KeyboardAvoidingView>
   );
 };
-
-const selectInventoryLoading = (state: {inventory: {loading: boolean}}) =>
-  state.inventory.loading;
-
-const showError = (message: string) => ({
-  type: 'ui/showError',
-  payload: {title: '错误', message},
-});
 
 const styles = StyleSheet.create({
   container: {
@@ -251,6 +311,14 @@ const styles = StyleSheet.create({
   },
   unitInfo: {
     color: '#666',
+  },
+  calculationText: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#E3F2FD',
+    borderRadius: 8,
+    color: '#1565C0',
+    fontWeight: '500',
   },
   submitButton: {
     marginTop: 8,

@@ -15,11 +15,13 @@ import {
   Dialog,
   Portal,
   useTheme,
+  SegmentedButtons,
 } from 'react-native-paper';
 import {useAppDispatch, useAppSelector} from '@/store/hooks';
-import {executeTransaction, selectSelectedMedicine} from '@/store/slices/inventorySlice';
+import {executeTransaction, selectSelectedMedicine, selectInventoryLoading, selectPackagedStockBySize, PackagedStockBySize} from '@/store/slices/inventorySlice';
 import {TransactionType, UnitType, Medicine} from '@/types';
 import {convertToBaseUnits, calculateUnpack, canUnpack} from '@/utils/conversion/UnitConverter';
+import {showToast, showError} from '@/store/slices/uiSlice';
 
 interface UnpackModalProps {
   /**
@@ -52,7 +54,13 @@ export const UnpackModal: React.FC<UnpackModalProps> = ({
   // Use prop medicine if provided, otherwise use selected medicine from store
   const medicine = propMedicine || selectedMedicine;
 
+  // Get packaged stock grouped by size
+  const packagedStockBySize = useAppSelector(state =>
+    medicine ? selectPackagedStockBySize(state, medicine.id) : []
+  );
+
   const [packagesToUnpack, setPackagesToUnpack] = useState('0');
+  const [selectedPackageSize, setSelectedPackageSize] = useState<number | null>(null);
   const [notes, setNotes] = useState('');
 
   // Calculate unpack result
@@ -65,11 +73,18 @@ export const UnpackModal: React.FC<UnpackModalProps> = ({
   useEffect(() => {
     if (medicine && packagesToUnpack) {
       const packages = parseFloat(packagesToUnpack);
-      if (packages > 0 && medicine.packagedStock >= packages) {
+      const effectivePackageSize = selectedPackageSize || medicine.packageSize;
+
+      // Find available packages for selected size
+      const availablePackages = selectedPackageSize
+        ? packagedStockBySize.find(s => s.packageSize === selectedPackageSize)?.count || 0
+        : medicine.packagedStock;
+
+      if (packages > 0 && availablePackages >= packages) {
         const result = calculateUnpack(
-          medicine.packagedStock,
+          availablePackages,
           packages,
-          medicine.packageSize,
+          effectivePackageSize,
           medicine.looseStock,
         );
         setUnpackResult(result);
@@ -79,35 +94,43 @@ export const UnpackModal: React.FC<UnpackModalProps> = ({
     } else {
       setUnpackResult(null);
     }
-  }, [medicine, packagesToUnpack]);
+  }, [medicine, packagesToUnpack, selectedPackageSize, packagedStockBySize]);
 
   // Validate form
   const isValid =
     medicine &&
     parseFloat(packagesToUnpack) > 0 &&
-    unpackResult !== null;
+    unpackResult !== null &&
+    (packagedStockBySize.length > 0 ? selectedPackageSize !== null : true);
 
   // Handle submit
   const handleSubmit = async () => {
     if (!isValid || !medicine) return;
 
     try {
-      await dispatch(
-        executeTransaction({
-          medicineId: medicine.id,
-          type: TransactionType.UNPACK,
-          quantity: parseFloat(packagesToUnpack),
-          unit: '包',
-          notes,
-        }),
-      ).unwrap();
+      const txnParams: any = {
+        medicineId: medicine.id,
+        type: TransactionType.UNPACK,
+        quantity: parseFloat(packagesToUnpack),
+        unit: '包',
+        notes,
+      };
 
+      // Add packageSize if specified
+      if (selectedPackageSize) {
+        txnParams.packageSize = selectedPackageSize;
+      }
+
+      await dispatch(executeTransaction(txnParams)).unwrap();
+
+      const spec = selectedPackageSize ? `${selectedPackageSize}g` : '';
       dispatch(
-        showToast(`已拆包 ${medicine.name} ${packagesToUnpack}包`),
+        showToast(`已拆包 ${medicine.name} ${packagesToUnpack}包${spec ? ` (${spec})` : ''}`),
       );
 
       // Reset and close
       setPackagesToUnpack('0');
+      setSelectedPackageSize(null);
       setNotes('');
       onDismiss();
     } catch (error) {
@@ -132,7 +155,11 @@ export const UnpackModal: React.FC<UnpackModalProps> = ({
   }
 
   const packagesToUnpackNum = parseFloat(packagesToUnpack) || 0;
-  const canUnpackPackages = canUnpack(medicine.packagedStock, packagesToUnpackNum);
+  const effectivePackageSize = selectedPackageSize || medicine.packageSize;
+  const availablePackages = selectedPackageSize
+    ? packagedStockBySize.find(s => s.packageSize === selectedPackageSize)?.count || 0
+    : medicine.packagedStock;
+  const canUnpackPackages = canUnpack(availablePackages, packagesToUnpackNum);
 
   return (
     <Portal>
@@ -146,27 +173,59 @@ export const UnpackModal: React.FC<UnpackModalProps> = ({
           {/* Current Stock Info */}
           <View style={styles.stockInfo}>
             <View style={styles.stockRow}>
-              <Text variant="bodyMedium">包装库存:</Text>
-              <Text variant="bodyMedium" style={styles.stockValue}>
-                {medicine.packagedStock} {medicine.packageUnit}
-              </Text>
-            </View>
-            <View style={styles.stockRow}>
               <Text variant="bodyMedium">散装库存:</Text>
               <Text variant="bodyMedium" style={styles.stockValue}>
                 {medicine.looseStock} {medicine.baseUnit}
               </Text>
             </View>
-            <Divider style={styles.divider} />
-            <View style={styles.stockRow}>
-              <Text variant="bodyMedium" style={styles.totalLabel}>
-                每包规格:
-              </Text>
-              <Text variant="bodyMedium" style={styles.stockValue}>
-                {medicine.packageSize} {medicine.baseUnit}
-              </Text>
-            </View>
+
+            {/* Display packaged stock by specification */}
+            {packagedStockBySize.length > 0 ? (
+              <>
+                <Text variant="bodyMedium" style={styles.totalLabel}>
+                  包装库存:
+                </Text>
+                {packagedStockBySize.map(({ packageSize, count }) => (
+                  <View key={packageSize} style={styles.stockRow}>
+                    <Text variant="bodySmall" style={styles.packageSpecLabel}>
+                      • {packageSize}g/包
+                    </Text>
+                    <Text variant="bodyMedium" style={styles.stockValue}>
+                      {count} 包
+                    </Text>
+                  </View>
+                ))}
+              </>
+            ) : (
+              <View style={styles.stockRow}>
+                <Text variant="bodyMedium">包装库存:</Text>
+                <Text variant="bodyMedium" style={styles.stockValue}>
+                  {medicine.packagedStock} {medicine.packageUnit}
+                </Text>
+              </View>
+            )}
           </View>
+
+          {/* Package Size Selection (if multiple specs) */}
+          {packagedStockBySize.length > 1 && (
+            <View style={styles.section}>
+              <Text variant="titleSmall" style={styles.sectionTitle}>
+                选择要拆的包装规格
+              </Text>
+              <SegmentedButtons
+                value={selectedPackageSize?.toString() || ''}
+                onValueChange={(value) => setSelectedPackageSize(value ? Number(value) : null)}
+                buttons={[
+                  { label: '默认', value: medicine.packageSize.toString() },
+                  ...packagedStockBySize.map(({ packageSize, count }) => ({
+                    label: `${packageSize}g`,
+                    value: packageSize.toString(),
+                  }))
+                ]}
+                style={styles.segmentedButtons}
+              />
+            </View>
+          )}
 
           {/* Input */}
           <TextInput
@@ -176,7 +235,7 @@ export const UnpackModal: React.FC<UnpackModalProps> = ({
             label="拆包数量"
             mode="outlined"
             style={styles.input}
-            error={packagesToUnpackNum > medicine.packagedStock}
+            error={packagesToUnpackNum > availablePackages}
             autoFocus
           />
 
@@ -185,20 +244,20 @@ export const UnpackModal: React.FC<UnpackModalProps> = ({
             <Button
               mode="outlined"
               onPress={() => setPackagesToUnpack('1')}
-              disabled={medicine.packagedStock < 1}
+              disabled={availablePackages < 1}
               style={styles.quickButton}>
               1包
             </Button>
             <Button
               mode="outlined"
               onPress={() => setPackagesToUnpack('2')}
-              disabled={medicine.packagedStock < 2}
+              disabled={availablePackages < 2}
               style={styles.quickButton}>
               2包
             </Button>
             <Button
               mode="outlined"
-              onPress={() => setPackagesToUnpack(String(medicine.packagedStock))}
+              onPress={() => setPackagesToUnpack(String(availablePackages))}
               style={styles.quickButton}>
               全部
             </Button>
@@ -208,7 +267,7 @@ export const UnpackModal: React.FC<UnpackModalProps> = ({
           {packagesToUnpackNum > 0 && !canUnpackPackages && (
             <View style={styles.warningContainer}>
               <Text style={styles.warningText}>
-                包装库存不足！当前只有 {medicine.packagedStock} 包
+                包装库存不足！当前只有 {availablePackages} 包 {selectedPackageSize ? `(${selectedPackageSize}g规格)` : ''}
               </Text>
             </View>
           )}
@@ -222,7 +281,7 @@ export const UnpackModal: React.FC<UnpackModalProps> = ({
               <View style={styles.previewRow}>
                 <Text variant="bodyMedium">包装库存:</Text>
                 <Text variant="bodyMedium" style={styles.previewValue}>
-                  {unpackResult.packagedStock} 包
+                  {unpackResult.packagedStock} 包 {selectedPackageSize ? `(${selectedPackageSize}g规格)` : ''}
                 </Text>
               </View>
               <View style={styles.previewRow}>
@@ -251,6 +310,9 @@ export const UnpackModal: React.FC<UnpackModalProps> = ({
             multiline
             numberOfLines={2}
             style={styles.input}
+            keyboardType="default"
+            autoCorrect={true}
+            autoCapitalize="sentences"
           />
         </Dialog.Content>
 
@@ -270,19 +332,6 @@ export const UnpackModal: React.FC<UnpackModalProps> = ({
     </Portal>
   );
 };
-
-const selectInventoryLoading = (state: {inventory: {loading: boolean}}) =>
-  state.inventory.loading;
-
-const showToast = (message: string) => ({
-  type: 'ui/showToast',
-  payload: message,
-});
-
-const showError = (message: string) => ({
-  type: 'ui/showError',
-  payload: {title: '错误', message},
-});
 
 const styles = StyleSheet.create({
   dialog: {
@@ -307,6 +356,10 @@ const styles = StyleSheet.create({
   },
   totalLabel: {
     fontWeight: '600',
+  },
+  packageSpecLabel: {
+    color: '#666',
+    marginLeft: 8,
   },
   divider: {
     marginVertical: 8,
@@ -359,7 +412,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#2E7D32',
   },
-  totalLabel: {
+  section: {
+    marginTop: 16,
+    marginBottom: 16,
+  },
+  sectionTitle: {
     fontWeight: '600',
+    marginBottom: 8,
+  },
+  segmentedButtons: {
+    marginBottom: 16,
   },
 });

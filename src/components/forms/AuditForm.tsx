@@ -24,10 +24,12 @@ import {
   recordAuditEntry,
   selectCurrentSession,
   selectCurrentRecord,
+  selectAuditLoading,
 } from '@/store/slices/auditSlice';
 import {TransactionType, UnitType} from '@/types';
 import {UnitSelector} from '@/components/inventory/UnitSelector';
 import {convertToBaseUnits} from '@/utils/conversion/UnitConverter';
+import {showToast, showError} from '@/store/slices/uiSlice';
 
 export const AuditForm: React.FC = () => {
   const theme = useTheme();
@@ -222,6 +224,9 @@ export const AuditForm: React.FC = () => {
             numberOfLines={3}
             style={styles.input}
             placeholder="记录差异原因..."
+            keyboardType="default"
+            autoCorrect={true}
+            autoCapitalize="sentences"
           />
         </View>
 
@@ -246,19 +251,6 @@ export const AuditForm: React.FC = () => {
     </KeyboardAvoidingView>
   );
 };
-
-const selectAuditLoading = (state: {audit: {loading: boolean}}) =>
-  state.audit.loading;
-
-const showToast = (message: string) => ({
-  type: 'ui/showToast',
-  payload: message,
-});
-
-const showError = (message: string) => ({
-  type: 'ui/showError',
-  payload: {title: '错误', message},
-});
 
 const styles = StyleSheet.create({
   container: {
