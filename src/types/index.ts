@@ -205,3 +205,38 @@ export type UnpackPlan = {
   beforeStock: number;
   afterStock: number;
 };
+
+// ============================================================================
+// OUTBOUND PLAN TYPES
+// ============================================================================
+
+/**
+ * 出库方案中单项的出库计划
+ */
+export interface OutboundPlanItem {
+  packageSize: number | null;  // 包装规格，null表示散装
+  quantity: number;             // 出库数量（包数或基础单位数）
+  unit: UnitType;               // 单位
+  quantityInBaseUnits: number;  // 转换为基础单位的数量
+}
+
+/**
+ * 完整的出库方案
+ */
+export interface OutboundPlan {
+  medicineId: string;
+  requiredQuantity: number;     // 用户需要的总数量（基础单位）
+  totalAvailable: number;       // 可用总库存（基础单位）
+  items: OutboundPlanItem[];    // 出库项列表
+  isFeasible: boolean;          // 是否可行
+  reason?: string;              // 不可行原因
+}
+
+/**
+ * 出库策略类型
+ */
+export type OutboundStrategy =
+  | 'optimal'      // 最优策略：优先大包装，避免拆包
+  | 'greedy'       // 贪心策略：尽可能使用库存
+  | 'loose_first'  // 优先散装
+  | 'package_only'; // 仅使用包装

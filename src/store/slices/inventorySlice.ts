@@ -5,10 +5,8 @@
  * This is the primary state management for all inventory operations.
  */
 
-import {createSlice, createAsyncThunk, PayloadAction} from '@reduxjs/toolkit';
-import {database} from '@/database';
-import {Medicine} from '@/database/models/Medicine';
-import {StockTransaction} from '@/database/models/StockTransaction';
+import {createSlice, createAsyncThunk, PayloadAction, createSelector} from '@reduxjs/toolkit';
+import {getDatabase} from '@/database';
 import {
   InventoryMode,
   InventoryState,
@@ -16,6 +14,7 @@ import {
   UnitType,
   Medicine as MedicineType,
 } from '@/types';
+import {RootState} from '@/store';
 import Q from '@nozbe/watermelondb/Query';
 import {convertToBaseUnits, convertFromBaseUnits} from '@/utils/conversion/UnitConverter';
 
@@ -43,7 +42,8 @@ export const loadMedicines = createAsyncThunk(
   'inventory/loadMedicines',
   async (_, {rejectWithValue}) => {
     try {
-      const medicinesCollection = database.get<Medicine>('medicines');
+      const database = getDatabase();
+      const medicinesCollection = database.get<any>('medicines');
       const allMedicines = await medicinesCollection.query().fetch();
 
       return allMedicines.map(m => ({
@@ -75,17 +75,18 @@ export const searchMedicines = createAsyncThunk(
   'inventory/searchMedicines',
   async (query: string, {rejectWithValue}) => {
     try {
-      const medicinesCollection = database.get<Medicine>('medicines');
+      const database = getDatabase();
+      const medicinesCollection = database.get<any>('medicines');
 
-      // Search by name or pinyin
-      const results = await medicinesCollection
-        .query(
-          Q.or(
-            Q.where('name', Q.like(`%${query}%`)),
-            Q.where('pinyin', Q.like(`%${query.toLowerCase()}%`)),
-          ),
-        )
-        .fetch();
+      // Fetch all medicines and filter in-memory
+      // This avoids WatermelonDB query issues with NULL values
+      const allMedicines = await medicinesCollection.query().fetch();
+
+      const lowerQuery = query.toLowerCase();
+      const results = allMedicines.filter(m =>
+        m.name.toLowerCase().includes(lowerQuery) ||
+        (m.pinyin && m.pinyin.toLowerCase().includes(lowerQuery))
+      );
 
       return results.map(m => ({
         id: m.id,
@@ -104,6 +105,7 @@ export const searchMedicines = createAsyncThunk(
         updatedAt: m.updatedAt,
       }));
     } catch (error) {
+      console.error('Search medicines error:', error);
       return rejectWithValue((error as Error).message);
     }
   },
@@ -121,14 +123,16 @@ export const executeTransaction = createAsyncThunk(
       type: TransactionType;
       quantity: number;
       unit: UnitType;
+      packageSize?: number; // Package size for this transaction (optional)
       referenceId?: string;
       notes?: string;
     },
     {rejectWithValue},
   ) => {
     try {
-      const medicinesCollection = database.get<Medicine>('medicines');
-      const transactionsCollection = database.get<StockTransaction>('stock_transactions');
+      const database = getDatabase();
+      const medicinesCollection = database.get<any>('medicines');
+      const transactionsCollection = database.get<any>('stock_transactions');
 
       const medicine = await medicinesCollection.find(payload.medicineId);
 
@@ -156,7 +160,9 @@ export const executeTransaction = createAsyncThunk(
           if (isPackageUnit) {
             // Package inbound: increase packaged stock
             newPackagedStock = medicine.packagedStock + payload.quantity;
-            finalQuantity = payload.quantity * medicine.packageSize; // In base units
+            // Use provided packageSize or fall back to medicine's default
+            const currentPackageSize = payload.packageSize || medicine.packageSize;
+            finalQuantity = payload.quantity * currentPackageSize; // In base units
           } else {
             // Loose inbound: increase loose stock
             newLooseStock = medicine.looseStock + quantityInBaseUnits;
@@ -173,7 +179,9 @@ export const executeTransaction = createAsyncThunk(
               );
             }
             newPackagedStock = medicine.packagedStock - payload.quantity;
-            finalQuantity = payload.quantity * medicine.packageSize;
+            // Use provided packageSize or fall back to medicine's default
+            const currentPackageSize = payload.packageSize || medicine.packageSize;
+            finalQuantity = payload.quantity * currentPackageSize;
           } else {
             // Loose outbound: decrease loose stock
             if (quantityInBaseUnits > medicine.looseStock) {
@@ -228,6 +236,10 @@ export const executeTransaction = createAsyncThunk(
           transaction.type = payload.type;
           transaction.quantity = finalQuantity;
           transaction.unit = payload.unit;
+          // Store packageSize for package units, null for loose units
+          transaction.packageSize = isPackageUnit
+            ? (payload.packageSize ?? medicine.packageSize)
+            : null;
           transaction.beforeStock = beforeStock;
           transaction.afterStock = afterStock;
           transaction.referenceId = payload.referenceId;
@@ -274,13 +286,133 @@ export const executeTransaction = createAsyncThunk(
 );
 
 /**
+ * Create a new medicine
+ */
+export const createMedicine = createAsyncThunk(
+  'inventory/createMedicine',
+  async (
+    payload: {
+      name: string;
+      pinyin?: string;
+      category: string;
+      baseUnit: UnitType;
+      packageUnit: string;
+      packageSize: number;
+      minStock: number;
+      location?: string;
+    },
+    {rejectWithValue},
+  ) => {
+    try {
+      const database = getDatabase();
+      const medicinesCollection = database.get<any>('medicines');
+
+      const medicine = await medicinesCollection.create(m => {
+        m.name = payload.name;
+        m.pinyin = payload.pinyin || null;
+        m.category = payload.category;
+        m.baseUnit = payload.baseUnit;
+        m.packageUnit = payload.packageUnit;
+        m.packageSize = payload.packageSize;
+        m.currentStock = 0;
+        m.looseStock = 0;
+        m.packagedStock = 0;
+        m.minStock = payload.minStock;
+        m.location = payload.location || null;
+      });
+
+      // Reload all medicines
+      const allMedicines = await medicinesCollection.query().fetch();
+      return allMedicines.map(m => ({
+        id: m.id,
+        name: m.name,
+        pinyin: m.pinyin ?? undefined,
+        category: m.category,
+        baseUnit: m.baseUnit,
+        packageUnit: m.packageUnit,
+        packageSize: m.packageSize,
+        currentStock: m.currentStock,
+        looseStock: m.looseStock,
+        packagedStock: m.packagedStock,
+        minStock: m.minStock,
+        location: m.location ?? undefined,
+        createdAt: m.createdAt,
+        updatedAt: m.updatedAt,
+      }));
+    } catch (error) {
+      return rejectWithValue((error as Error).message);
+    }
+  },
+);
+
+/**
+ * Update an existing medicine
+ */
+export const updateMedicine = createAsyncThunk(
+  'inventory/updateMedicine',
+  async (
+    payload: {
+      id: string;
+      name: string;
+      pinyin?: string;
+      category: string;
+      baseUnit: UnitType;
+      packageUnit: string;
+      packageSize: number;
+      minStock: number;
+      location?: string;
+    },
+    {rejectWithValue},
+  ) => {
+    try {
+      const database = getDatabase();
+      const medicinesCollection = database.get<any>('medicines');
+      const medicine = await medicinesCollection.find(payload.id);
+
+      await medicine.update(m => {
+        m.name = payload.name;
+        m.pinyin = payload.pinyin || null;
+        m.category = payload.category;
+        m.baseUnit = payload.baseUnit;
+        m.packageUnit = payload.packageUnit;
+        m.packageSize = payload.packageSize;
+        m.minStock = payload.minStock;
+        m.location = payload.location || null;
+      });
+
+      // Reload all medicines
+      const allMedicines = await medicinesCollection.query().fetch();
+      return allMedicines.map(m => ({
+        id: m.id,
+        name: m.name,
+        pinyin: m.pinyin ?? undefined,
+        category: m.category,
+        baseUnit: m.baseUnit,
+        packageUnit: m.packageUnit,
+        packageSize: m.packageSize,
+        currentStock: m.currentStock,
+        looseStock: m.looseStock,
+        packagedStock: m.packagedStock,
+        minStock: m.minStock,
+        location: m.location ?? undefined,
+        createdAt: m.createdAt,
+        updatedAt: m.updatedAt,
+      }));
+    } catch (error) {
+      return rejectWithValue((error as Error).message);
+    }
+  },
+);
+
+/**
  * Load transaction history for a medicine
  */
 export const loadTransactionHistory = createAsyncThunk(
   'inventory/loadTransactionHistory',
   async (medicineId: string, {rejectWithValue}) => {
     try {
-      const transactionsCollection = database.get<StockTransaction>('stock_transactions');
+      const database = getDatabase();
+      const transactionsCollection = database.get<any>('stock_transactions');
 
       const transactions = await transactionsCollection
         .query(Q.where('medicine_id', medicineId), Q.sortBy('created_at', Q.desc))
@@ -293,6 +425,7 @@ export const loadTransactionHistory = createAsyncThunk(
         type: t.type,
         quantity: t.quantity,
         unit: t.unit,
+        packageSize: t.packageSize,
         beforeStock: t.beforeStock,
         afterStock: t.afterStock,
         referenceId: t.referenceId ?? undefined,
@@ -398,6 +531,43 @@ const inventorySlice = createSlice({
       .addCase(loadTransactionHistory.fulfilled, (state, action) => {
         state.transactions = action.payload;
       });
+
+    // createMedicine
+    builder
+      .addCase(createMedicine.pending, state => {
+        state.loading = true;
+        state.error = undefined;
+      })
+      .addCase(createMedicine.fulfilled, (state, action) => {
+        state.loading = false;
+        state.medicines = action.payload;
+      })
+      .addCase(createMedicine.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
+      });
+
+    // updateMedicine
+    builder
+      .addCase(updateMedicine.pending, state => {
+        state.loading = true;
+        state.error = undefined;
+      })
+      .addCase(updateMedicine.fulfilled, (state, action) => {
+        state.loading = false;
+        state.medicines = action.payload;
+        // Update selected medicine if it's the same one
+        if (state.selectedMedicine) {
+          const updated = action.payload.find(m => m.id === state.selectedMedicine?.id);
+          if (updated) {
+            state.selectedMedicine = updated;
+          }
+        }
+      })
+      .addCase(updateMedicine.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
+      });
   },
 });
 
@@ -416,21 +586,93 @@ export const {
 // SELECTORS
 // ============================================================================
 
-export const selectMedicines = (state: {inventory: InventoryState}) => state.inventory.medicines;
-export const selectSelectedMedicine = (state: {inventory: InventoryState}) =>
-  state.inventory.selectedMedicine;
-export const selectCurrentMode = (state: {inventory: InventoryState}) => state.inventory.currentMode;
-export const selectInventoryLoading = (state: {inventory: InventoryState}) => state.inventory.loading;
-export const selectInventoryError = (state: {inventory: InventoryState}) => state.inventory.error;
-export const selectTransactions = (state: {inventory: InventoryState}) => state.inventory.transactions;
+export const selectMedicines = (state: any) => state?.inventory?.medicines || [];
+export const selectSelectedMedicine = (state: any) =>
+  state?.inventory?.selectedMedicine || null;
+export const selectCurrentMode = (state: any) => state?.inventory?.currentMode || InventoryMode.INBOUND;
+export const selectInventoryLoading = (state: any) => state?.inventory?.loading || false;
+export const selectInventoryError = (state: any) => state?.inventory?.error || undefined;
+export const selectTransactions = (state: any) => state?.inventory?.transactions || [];
 
 // Get low stock medicines
-export const selectLowStockMedicines = (state: {inventory: InventoryState}) =>
-  state.inventory.medicines.filter(m => m.currentStock < m.minStock);
+export const selectLowStockMedicines = (state: any) =>
+  state?.inventory?.medicines?.filter(m => m.currentStock < m.minStock) || [];
 
 // Get medicines sorted by name
-export const selectMedicinesSorted = (state: {inventory: InventoryState}) =>
-  [...state.inventory.medicines].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+export const selectMedicinesSorted = (state: any) =>
+  [...(state?.inventory?.medicines || [])].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+
+/**
+ * Type for packaged stock grouped by size
+ */
+export interface PackagedStockBySize {
+  packageSize: number;
+  count: number;
+}
+
+/**
+ * Calculate packaged stock grouped by package size for a specific medicine
+ *
+ * Returns an array of {packageSize, count} objects representing
+ * how many packages of each specification are in stock.
+ *
+ * For example: [{ packageSize: 500, count: 3 }, { packageSize: 250, count: 2 }]
+ * means: 3 packages of 500g each, and 2 packages of 250g each
+ */
+export const selectPackagedStockBySize = createSelector(
+  [
+    (state: RootState) => state.inventory.transactions,
+    (state: RootState, medicineId: string) => medicineId,
+    (state: RootState, medicineId: string) => {
+      const medicine = state.inventory.medicines.find(m => m.id === medicineId);
+      return medicine?.packageSize || 500; // Default package size
+    },
+  ],
+  (transactions, medicineId, defaultPackageSize) => {
+    // Group stock by package size
+    const stockBySize = new Map<number, number>();
+
+    // Process all transactions for this medicine
+    transactions
+      .filter(t => t.medicineId === medicineId)
+      .forEach(t => {
+        const isPackageUnit = ['包', '盒', '瓶'].includes(t.unit);
+
+        if (!isPackageUnit || t.packageSize === null) {
+          return; // Skip loose units and transactions without package size
+        }
+
+        const size = t.packageSize;
+        const quantity = Math.abs(t.quantity); // Get absolute quantity
+        const packageCount = quantity / size; // Calculate number of packages
+
+        // Update stock based on transaction type
+        switch (t.type) {
+          case TransactionType.INBOUND:
+            stockBySize.set(size, (stockBySize.get(size) || 0) + packageCount);
+            break;
+          case TransactionType.OUTBOUND:
+            stockBySize.set(size, (stockBySize.get(size) || 0) - packageCount);
+            break;
+          case TransactionType.UNPACK:
+            // Unpack converts packages to loose, so decrease packaged count
+            stockBySize.set(size, (stockBySize.get(size) || 0) - packageCount);
+            break;
+          case TransactionType.AUDIT:
+            // Audits typically result in loose stock, ignore for packaged
+            break;
+        }
+      });
+
+    // Convert map to array and filter out zero/negative stock
+    return Array.from(stockBySize.entries())
+      .map(([packageSize, count]) => ({ packageSize, count }))
+      .filter(item => item.count > 0)
+      .sort((a, b) => b.packageSize - a.packageSize); // Sort by package size descending
+  }
+);
+
+// Note: RootState is imported from @/store/index.ts
 
 // ============================================================================
 // REDUCER

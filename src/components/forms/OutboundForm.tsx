@@ -5,7 +5,7 @@
  * Supports both packaged and loose stock removal with proper validation.
  */
 
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useMemo} from 'react';
 import {View, StyleSheet, KeyboardAvoidingView, Platform} from 'react-native';
 import {
   TextInput,
@@ -15,12 +15,28 @@ import {
   SegmentedButtons,
   ProgressBar,
   useTheme,
+  Card,
 } from 'react-native-paper';
 import {ScrollView} from 'react-native-gesture-handler';
 import {useAppDispatch, useAppSelector} from '@/store/hooks';
-import {executeTransaction, selectSelectedMedicine} from '@/store/slices/inventorySlice';
+import {
+  executeTransaction,
+  selectSelectedMedicine,
+  selectInventoryLoading,
+  selectPackagedStockBySize,
+  PackagedStockBySize,
+} from '@/store/slices/inventorySlice';
 import {TransactionType, UnitType} from '@/types';
-import {convertToBaseUnits, convertFromBaseUnits} from '@/utils/conversion/UnitConverter';
+import {
+  convertToBaseUnits,
+  convertFromBaseUnits,
+} from '@/utils/conversion/UnitConverter';
+import {showToast, showError} from '@/store/slices/uiSlice';
+import {
+  calculateOptimalOutboundPlan,
+  formatOutboundPlan,
+  getOutboundPlanSummary,
+} from '@/utils/conversion/OutboundCalculator';
 
 export const OutboundForm: React.FC = () => {
   const theme = useTheme();
@@ -28,6 +44,14 @@ export const OutboundForm: React.FC = () => {
 
   const selectedMedicine = useAppSelector(selectSelectedMedicine);
   const loading = useAppSelector(selectInventoryLoading);
+
+  // Get packaged stock grouped by size
+  const packagedStockBySize = useAppSelector(state =>
+    selectedMedicine ? selectPackagedStockBySize(state, selectedMedicine.id) : [],
+  );
+
+  // Outbound mode: simple (traditional) or smart (intelligent mixed outbound)
+  const [outboundMode, setOutboundMode] = useState<'simple' | 'smart'>('smart');
 
   const [quantity, setQuantity] = useState('0');
   const [stockType, setStockType] = useState<'packaged' | 'loose'>('loose');
@@ -72,30 +96,99 @@ export const OutboundForm: React.FC = () => {
     }
   }, [selectedMedicine, quantity, unit, stockType]);
 
+  // Calculate smart outbound plan
+  const outboundPlan = useMemo(() => {
+    if (
+      outboundMode === 'smart' &&
+      selectedMedicine &&
+      quantity &&
+      parseFloat(quantity) > 0
+    ) {
+      const qty = parseFloat(quantity);
+      const requiredQty = convertToBaseUnits(
+        qty,
+        unit,
+        selectedMedicine.packageSize,
+      );
+
+      const plan = calculateOptimalOutboundPlan(
+        packagedStockBySize,
+        selectedMedicine.looseStock,
+        requiredQty,
+        'optimal',
+      );
+
+      return plan;
+    }
+    return null;
+  }, [outboundMode, selectedMedicine, quantity, unit, packagedStockBySize]);
+
+  // Get plan summary for smart mode
+  const planSummary = useMemo(() => {
+    if (outboundPlan && outboundPlan.isFeasible) {
+      return getOutboundPlanSummary(outboundPlan);
+    }
+    return null;
+  }, [outboundPlan]);
+
   // Validate form
-  const isValid = selectedMedicine && parseFloat(quantity) > 0 && stockAvailable;
+  const isValid = useMemo(() => {
+    if (!selectedMedicine || parseFloat(quantity) <= 0) {
+      return false;
+    }
+
+    if (outboundMode === 'smart') {
+      // For smart mode, check if plan is feasible
+      return outboundPlan?.isFeasible || false;
+    } else {
+      // For simple mode, check stock availability
+      return stockAvailable;
+    }
+  }, [selectedMedicine, quantity, stockAvailable, outboundMode, outboundPlan]);
 
   // Handle submit
   const handleSubmit = async () => {
     if (!isValid || !selectedMedicine) return;
 
     try {
-      await dispatch(
-        executeTransaction({
-          medicineId: selectedMedicine.id,
-          type: TransactionType.OUTBOUND,
-          quantity: parseFloat(quantity),
-          unit,
-          notes: `${stockType === 'packaged' ? '包装' : '散装'}出库 - ${notes}`,
-        }),
-      ).unwrap();
+      if (outboundMode === 'smart' && outboundPlan && outboundPlan.isFeasible) {
+        // Smart mode: Execute multiple transactions for each item in the plan
+        for (const item of outboundPlan.items) {
+          await dispatch(
+            executeTransaction({
+              medicineId: selectedMedicine.id,
+              type: TransactionType.OUTBOUND,
+              quantity: item.quantity,
+              unit: item.unit,
+              packageSize: item.packageSize ?? undefined,
+              notes: `智能出库 - ${notes}`,
+            }),
+          ).unwrap();
+        }
 
-      dispatch(
-        showToast(`已出库 ${selectedMedicine.name} ${quantity}${unit}`),
-      );
+        // Format summary for toast
+        const summary = formatOutboundPlan(outboundPlan);
+        dispatch(showToast(`已出库 ${selectedMedicine.name} - ${summary}`));
 
-      setQuantity('0');
-      setNotes('');
+        setQuantity('0');
+        setNotes('');
+      } else {
+        // Simple mode: Traditional single transaction
+        await dispatch(
+          executeTransaction({
+            medicineId: selectedMedicine.id,
+            type: TransactionType.OUTBOUND,
+            quantity: parseFloat(quantity),
+            unit,
+            notes: `${stockType === 'packaged' ? '包装' : '散装'}出库 - ${notes}`,
+          }),
+        ).unwrap();
+
+        dispatch(showToast(`已出库 ${selectedMedicine.name} ${quantity}${unit}`));
+
+        setQuantity('0');
+        setNotes('');
+      }
     } catch (error) {
       dispatch(showError((error as Error).message));
     }
@@ -144,40 +237,83 @@ export const OutboundForm: React.FC = () => {
             规格: {selectedMedicine.packageSize}{selectedMedicine.baseUnit}/{selectedMedicine.packageUnit}
           </Text>
           <View style={styles.stockInfoRow}>
-            <Text variant="bodyMedium} style={styles.stockLabel}>
-              包装库存: {selectedMedicine.packagedStock}{selectedMedicine.packageUnit}
-            </Text>
             <Text variant="bodyMedium" style={styles.stockLabel}>
               散装库存: {selectedMedicine.looseStock}{selectedMedicine.baseUnit}
             </Text>
           </View>
+          {/* Display packaged stock by specification */}
+          {packagedStockBySize.length > 0 ? (
+            <View style={styles.packageSpecContainer}>
+              <Text variant="bodyMedium" style={styles.stockLabel}>
+                包装库存:
+              </Text>
+              {packagedStockBySize.map(({ packageSize, count }) => (
+                <Text key={packageSize} variant="bodyMedium" style={styles.packageSpecText}>
+                  • {packageSize}g/包 × {count}包
+                </Text>
+              ))}
+            </View>
+          ) : (
+            <Text variant="bodyMedium" style={styles.stockLabel}>
+              包装库存: {selectedMedicine.packagedStock}{selectedMedicine.packageUnit}
+            </Text>
+          )}
         </View>
 
         <Divider />
 
-        {/* Stock Type Selection */}
+        {/* Outbound Mode Selection */}
         <View style={styles.section}>
           <Text variant="titleMedium" style={styles.sectionTitle}>
-            出库类型
+            出库模式
           </Text>
           <SegmentedButtons
-            value={stockType}
-            onValueChange={(value) => setStockType(value as 'packaged' | 'loose')}
+            value={outboundMode}
+            onValueChange={(value) => setOutboundMode(value as 'simple' | 'smart')}
             buttons={[
               {
-                label: `散装出库`,
-                value: 'loose',
-                disabled: selectedMedicine.looseStock === 0,
+                label: '简单模式',
+                value: 'simple',
               },
               {
-                label: `包装出库`,
-                value: 'packaged',
-                disabled: selectedMedicine.packagedStock === 0,
+                label: '智能模式',
+                value: 'smart',
               },
             ]}
             style={styles.segmentedButtons}
           />
+          <Text variant="bodySmall" style={styles.modeDescription}>
+            {outboundMode === 'simple'
+              ? '简单模式：手动选择出库类型（包装/散装）'
+              : '智能模式：自动计算最优包装组合，支持多规格混合出库'}
+          </Text>
         </View>
+
+        {/* Stock Type Selection - Only show in simple mode */}
+        {outboundMode === 'simple' && (
+          <View style={styles.section}>
+            <Text variant="titleMedium" style={styles.sectionTitle}>
+              出库类型
+            </Text>
+            <SegmentedButtons
+              value={stockType}
+              onValueChange={(value) => setStockType(value as 'packaged' | 'loose')}
+              buttons={[
+                {
+                  label: `散装出库`,
+                  value: 'loose',
+                  disabled: selectedMedicine.looseStock === 0,
+                },
+                {
+                  label: `包装出库`,
+                  value: 'packaged',
+                  disabled: selectedMedicine.packagedStock === 0,
+                },
+              ]}
+              style={styles.segmentedButtons}
+            />
+          </View>
+        )}
 
         {/* Quantity Input */}
         <View style={styles.section}>
@@ -214,8 +350,8 @@ export const OutboundForm: React.FC = () => {
             ))}
           </View>
 
-          {/* Stock Availability Warning */}
-          {quantity && !stockAvailable && (
+          {/* Stock Availability Warning - Only for simple mode */}
+          {outboundMode === 'simple' && quantity && !stockAvailable && (
             <View style={styles.warningContainer}>
               <Text style={styles.warningText}>
                 {stockType === 'packaged'
@@ -225,20 +361,51 @@ export const OutboundForm: React.FC = () => {
               </Text>
             </View>
           )}
+
+          {/* Smart Mode Plan Preview */}
+          {outboundMode === 'smart' && outboundPlan && quantity && (
+            <View style={styles.planPreviewContainer}>
+              {outboundPlan.isFeasible ? (
+                <Card style={styles.planCard}>
+                  <Card.Content>
+                    <Text variant="titleSmall" style={styles.planTitle}>
+                      智能出库方案
+                    </Text>
+                    {outboundPlan.items.map((item, index) => (
+                      <Text key={index} variant="bodyMedium" style={styles.planItem}>
+                        {item.packageSize
+                          ? `• ${item.packageSize}g/包 × ${item.quantity}包`
+                          : `• ${item.quantity}g散装`}
+                      </Text>
+                    ))}
+                    <Divider style={styles.planDivider} />
+                    <Text variant="bodyMedium" style={styles.planTotal}>
+                      总计: {outboundPlan.items.reduce((sum, i) => sum + i.quantityInBaseUnits, 0)}g
+                    </Text>
+                  </Card.Content>
+                </Card>
+              ) : (
+                <View style={styles.warningContainer}>
+                  <Text style={styles.warningText}>{outboundPlan.reason}</Text>
+                </View>
+              )}
+            </View>
+          )}
         </View>
 
-        {/* Unit Display */}
-        <View style={styles.section}>
-          <Text variant="titleMedium" style={styles.sectionTitle}>
-            单位: {unit}
-          </Text>
-          <Text variant="bodyMedium} style={styles.unitInfo}>
-            {stockType === 'packaged'
-              ? `每包${selectedMedicine.packageSize}${selectedMedicine.baseUnit}`
-              : `散装单位`
-            }
-          </Text>
-        </View>
+        {/* Unit Display - Only for simple mode */}
+        {outboundMode === 'simple' && (
+          <View style={styles.section}>
+            <Text variant="titleMedium" style={styles.sectionTitle}>
+              单位: {unit}
+            </Text>
+            <Text variant="bodyMedium" style={styles.unitInfo}>
+              {stockType === 'packaged'
+                ? `每包${selectedMedicine.packageSize}${selectedMedicine.baseUnit}`
+                : `散装单位`}
+            </Text>
+          </View>
+        )}
 
         {/* Notes */}
         <View style={styles.section}>
@@ -261,26 +428,21 @@ export const OutboundForm: React.FC = () => {
           loading={loading}
           style={styles.submitButton}
           contentStyle={styles.submitButtonContent}
-          buttonColor={stockAvailable ? undefined : theme.colors.error}>
+          buttonColor={
+            outboundMode === 'smart'
+              ? outboundPlan?.isFeasible
+                ? undefined
+                : theme.colors.error
+              : stockAvailable
+              ? undefined
+              : theme.colors.error
+          }>
           确认出库
         </Button>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 };
-
-const selectInventoryLoading = (state: {inventory: {loading: boolean}}) =>
-  state.inventory.loading;
-
-const showToast = (message: string) => ({
-  type: 'ui/showToast',
-  payload: message,
-});
-
-const showError = (message: string) => ({
-  type: 'ui/showError',
-  payload: {title: '错误', message},
-});
 
 const styles = StyleSheet.create({
   container: {
@@ -319,8 +481,21 @@ const styles = StyleSheet.create({
   stockLabel: {
     color: '#666',
   },
+  packageSpecContainer: {
+    gap: 2,
+  },
+  packageSpecText: {
+    color: '#666',
+    marginLeft: 12,
+    fontSize: 12,
+  },
   segmentedButtons: {
     marginBottom: 16,
+  },
+  modeDescription: {
+    color: '#666',
+    fontSize: 12,
+    marginTop: 4,
   },
   availableStock: {
     color: '#00695C',
@@ -352,6 +527,31 @@ const styles = StyleSheet.create({
   },
   unitInfo: {
     color: '#666',
+  },
+  planPreviewContainer: {
+    marginTop: 16,
+  },
+  planCard: {
+    backgroundColor: '#E8F5E9',
+    borderWidth: 1,
+    borderColor: '#4CAF50',
+  },
+  planTitle: {
+    fontWeight: '600',
+    marginBottom: 8,
+    color: '#2E7D32',
+  },
+  planItem: {
+    marginBottom: 4,
+    color: '#1B5E20',
+  },
+  planDivider: {
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  planTotal: {
+    fontWeight: '600',
+    color: '#1B5E20',
   },
   submitButton: {
     marginTop: 8,
