@@ -32,7 +32,17 @@ local.properties
 *.hprof
 .cxx/
 *.keystore
-!debug.keystore
+android/app/src/main/res/mipmap-hdpi/
+
+# Backup files
+*.backup
+
+# Temporary files
+nul
+fix_codegen.*
+测试*.js
+*.apk
+android/gradle-bin.zip
 
 # node.js
 #
