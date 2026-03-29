@@ -26,6 +26,7 @@ export class StockTransaction extends Model {
 
   @field('quantity') quantity!: number; // In base units
   @field('unit') unit!: string; // Original unit for display
+  @field('package_size') packageSize!: number | null; // Package size for multi-spec support
 
   @readonly @field('before_stock') beforeStock!: number;
   @readonly @field('after_stock') afterStock!: number;

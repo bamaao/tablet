@@ -2,30 +2,39 @@
  * MedicineCard Component
  *
  * Displays a single medicine with its stock information.
- * Shows low-stock warning when stock is below minimum threshold.
+ * * Redesigned according to UI prototype with improved visual hierarchy.
  */
 
-import React from 'react';
-import {View, StyleSheet, GestureResponderEvent} from 'react-native';
-import {Card, Text, Avatar, useTheme, MD3Colors} from 'react-native-paper';
+import React, {useMemo} from 'react';
+import {View, StyleSheet, GestureResponderEvent, TouchableOpacity} from 'react-native';
+import {Card, Text, Avatar, useTheme, IconButton} from 'react-native-paper';
 import {Medicine as MedicineType} from '@/types';
+import {useAppSelector} from '@/store/hooks';
+import {selectPackagedStockBySize} from '@/store/slices/inventorySlice';
 
 interface MedicineCardProps {
   medicine: MedicineType;
   onPress?: (event: GestureResponderEvent) => void;
   onLongPress?: (event: GestureResponderEvent) => void;
+  onDelete?: () => void;
   showStockWarning?: boolean;
-  selected?: boolean;
+  isSelected?: boolean;
 }
 
 export const MedicineCard: React.FC<MedicineCardProps> = ({
   medicine,
   onPress,
   onLongPress,
+  onDelete,
   showStockWarning = false,
-  selected = false,
+  isSelected = false,
 }) => {
   const theme = useTheme();
+
+  // Get packaged stock grouped by size
+  const packagedStockBySize = useAppSelector(state =>
+    selectPackagedStockBySize(state, medicine.id)
+  );
 
   // Get category color
   const getCategoryColor = (): string => {
@@ -50,7 +59,7 @@ export const MedicineCard: React.FC<MedicineCardProps> = ({
     } else if (showStockWarning) {
       return '#FF9800'; // Orange - low stock
     }
-    return '#4CAF50'; // Green - in stock
+    return '#00A67D'; // Green - in stock (matching UI prototype)
   };
 
   // Get stock status text
@@ -63,175 +72,166 @@ export const MedicineCard: React.FC<MedicineCardProps> = ({
     return '正常';
   };
 
-  // Format stock display
-  const formatStockDisplay = (): string => {
+  // Calculate total stock display
+  const stockDisplay = useMemo(() => {
     const parts: string[] = [];
 
-    if (medicine.packagedStock > 0) {
-      parts.push(`${medicine.packagedStock}${medicine.packageUnit}`);
+    // Calculate total packages
+    let totalPackages = 0;
+    let totalGrams = medicine.looseStock || 0;
+
+    // Add packaged stock by size
+    if (packagedStockBySize && packagedStockBySize.length > 0) {
+      packagedStockBySize.forEach(({ packageSize, count }) => {
+        totalPackages += count;
+        totalGrams += packageSize * count;
+      });
     }
 
-    if (medicine.looseStock > 0) {
-      parts.push(`${medicine.looseStock}${medicine.baseUnit}`);
+    // Fallback to old format
+    if (totalPackages === 0 && medicine.packagedStock > 0) {
+      totalPackages = medicine.packagedStock;
     }
 
-    if (parts.length === 0) {
-      return `0${medicine.baseUnit}`;
+    // Format display
+    if (totalPackages > 0 && totalGrams > 0) {
+      return `${totalPackages}包 / ${totalGrams}g`;
+    } else if (totalPackages > 0) {
+      return `${totalPackages}${medicine.packageUnit}`;
+    } else if (totalGrams > 0) {
+      return `${totalGrams}${medicine.baseUnit}`;
     }
 
-    return parts.join(' + ');
-  };
+    return `0${medicine.baseUnit}`;
+  }, [packagedStockBySize, medicine]);
 
   const categoryColor = getCategoryColor();
   const stockColor = getStockStatusColor();
 
   return (
-    <Card
-      style={[styles.card, selected && styles.selectedCard]}
+    <TouchableOpacity
       onPress={onPress}
       onLongPress={onLongPress}
-      mode={selected ? 'contained' : 'elevated'}>
-      <Card.Content style={styles.content}>
-        {/* Left: Icon and Medicine Info */}
-        <View style={styles.leftContainer}>
-          <Avatar.Text
-            size={48}
-            label={medicine.name.substring(0, 1)}
-            style={[styles.avatar, {backgroundColor: categoryColor}]}
-            labelStyle={{color: '#FFFFFF', fontWeight: 'bold'}}
-          />
-
-          <View style={styles.infoContainer}>
-            <View style={styles.nameRow}>
-              <Text variant="titleMedium" style={styles.name}>
-                {medicine.name}
-              </Text>
-              <Text
-                variant="labelSmall"
-                style={[styles.categoryBadge, {backgroundColor: categoryColor + '20'}]}>
-                {getCategoryLabel(medicine.category)}
-              </Text>
-            </View>
-
-            <Text variant="bodyMedium" style={styles.spec}>
-              {medicine.packageSize}{medicine.baseUnit}/{medicine.packageUnit}
-            </Text>
-
-            {medicine.location && (
-              <Text variant="bodySmall" style={styles.location}>
-                位置: {medicine.location}
-              </Text>
-            )}
-          </View>
-        </View>
-
-        {/* Right: Stock Info */}
-        <View style={styles.stockContainer}>
-          <Text variant="headlineSmall" style={[styles.stockAmount, {color: stockColor}]}>
-            {formatStockDisplay()}
+      activeOpacity={0.7}
+      style={[
+        styles.cardContainer,
+        isSelected && styles.selectedCardContainer,
+      ]}>
+      <View style={[styles.card, isSelected && styles.selectedCard]}>
+        {/* Left: Medicine Icon */}
+        <View style={[styles.medicineIcon, {backgroundColor: isSelected ? '#FF6600' : categoryColor + '20'}]}>
+          <Text style={[styles.medicineIconText, {color: isSelected ? '#FFFFFF' : categoryColor}]}>
+            {medicine.name.charAt(0)}
           </Text>
-
-          <View
-            style={[
-              styles.statusBadge,
-              {backgroundColor: stockColor + '20', borderColor: stockColor},
-            ]}>
-            <Text variant="labelSmall" style={[styles.statusText, {color: stockColor}]}>
-              {getStockStatusText()}
-            </Text>
-          </View>
-
-          {showStockWarning && medicine.minStock > 0 && (
-            <Text variant="labelSmall" style={styles.warningText}>
-              最低库存: {medicine.minStock}{medicine.baseUnit}
-            </Text>
-          )}
         </View>
-      </Card.Content>
-    </Card>
+
+        {/* Center: Medicine Info */}
+        <View style={styles.infoContainer}>
+          <Text variant="titleMedium" style={styles.medicineName} numberOfLines={1}>
+            {medicine.name}
+          </Text>
+          <Text variant="bodySmall" style={styles.stockInfo}>
+            {stockDisplay}
+          </Text>
+        </View>
+
+        {/* Right: Stock Status */}
+        <View style={styles.stockStatusContainer}>
+          <Text variant="labelSmall" style={[styles.stockStatus, {color: stockColor}]}>
+            {getStockStatusText()}
+          </Text>
+        </View>
+
+        {/* Delete Button (shown on hover/long press) */}
+        {onDelete && (
+          <IconButton
+            icon="delete"
+            size={16}
+            onPress={onDelete}
+            style={styles.deleteButton}
+            iconColor="#F44336"
+          />
+        )}
+      </View>
+
+      {/* Selected Indicator */}
+      {isSelected && <View style={styles.selectedIndicator} />}
+    </TouchableOpacity>
   );
 };
 
-// Helper function to get category label
-function getCategoryLabel(category: string): string {
-  switch (category) {
-    case 'CHINESE_HERB':
-      return '中药材';
-    case 'CHINESE_PATENT':
-      return '中成药';
-    case 'WESTERN_MEDICINE':
-      return '西药';
-    case 'SUPPLIES':
-      return '医疗用品';
-    default:
-      return '其他';
-  }
-}
-
 const styles = StyleSheet.create({
+  cardContainer: {
+    marginBottom: 8,
+    marginHorizontal: 12,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  selectedCardContainer: {
+    // Additional styles for selected container if needed
+  },
   card: {
-    marginBottom: 12,
-    marginHorizontal: 0,
-  },
-  selectedCard: {
-    borderWidth: 2,
-    borderColor: '#00695C',
-  },
-  content: {
-    flexDirection: 'row',
-    paddingVertical: 12,
-  },
-  leftContainer: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
   },
-  avatar: {
+  selectedCard: {
+    backgroundColor: '#FFF3E0',
+    borderColor: '#FF6600',
+    borderWidth: 2,
+  },
+  medicineIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
     marginRight: 12,
+  },
+  medicineIconText: {
+    fontSize: 18,
+    fontWeight: '600',
   },
   infoContainer: {
     flex: 1,
-    gap: 2,
-  },
-  nameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  name: {
-    fontWeight: '600',
-  },
-  categoryBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  spec: {
-    color: '#666',
-  },
-  location: {
-    color: '#999',
-  },
-  stockContainer: {
-    alignItems: 'flex-end',
     justifyContent: 'center',
-    gap: 4,
-    minWidth: 100,
   },
-  stockAmount: {
+  medicineName: {
     fontWeight: '600',
+    color: '#333333',
+    marginBottom: 4,
   },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    borderWidth: 1,
+  stockInfo: {
+    color: '#666666',
   },
-  statusText: {
+  stockStatusContainer: {
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    minWidth: 60,
+  },
+  stockStatus: {
     fontWeight: '600',
+    fontSize: 12,
   },
-  warningText: {
-    color: '#FF9800',
+  deleteButton: {
+    margin: 0,
+    padding: 4,
+    position: 'absolute',
+    right: 4,
+    top: 4,
+  },
+  selectedIndicator: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
+    backgroundColor: '#FF6600',
+    borderTopLeftRadius: 8,
+    borderBottomLeftRadius: 8,
   },
 });

@@ -68,7 +68,11 @@ export const MedicineForm: React.FC<MedicineFormProps> = ({
 
   // Handle submit
   const handleSubmit = async () => {
-    if (!isValid) return;
+    console.log('handleSubmit called, isValid:', isValid, { name: name.trim(), packageSize, minStock });
+    if (!isValid) {
+      console.log('Form validation failed');
+      return;
+    }
 
     try {
       const medicineData = {
@@ -241,12 +245,11 @@ export const MedicineForm: React.FC<MedicineFormProps> = ({
             onChangeText={setLocation}
             label="存放位置（可选）"
             mode="outlined"
+            style={styles.input}
+            placeholder="例如: A1-01"
             keyboardType="default"
             autoCorrect={true}
             autoCapitalize="sentences"
-          />
-            style={styles.input}
-            placeholder="例如: A1-01"
           />
         </View>
 

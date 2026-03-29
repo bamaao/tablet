@@ -7,7 +7,6 @@
 import {Model} from '@nozbe/watermelondb';
 import {field, date, children, readonly} from '@nozbe/watermelondb/decorators';
 import {StockTransaction} from './StockTransaction';
-import {PrescriptionItem} from './PrescriptionItem';
 import {AuditRecord} from './AuditRecord';
 import {UnitType} from '@/types';
 
@@ -52,7 +51,6 @@ export class Medicine extends Model {
   // ========================================================================
 
   @children('stock_transactions') transactions!: StockTransaction[];
-  @children('prescription_items') prescriptionItems!: PrescriptionItem[];
   @children('audit_records') auditRecords!: AuditRecord[];
 
   // ========================================================================

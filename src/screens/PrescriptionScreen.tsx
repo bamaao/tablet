@@ -21,6 +21,8 @@ import {VoiceBar} from '@/components/voice/VoiceBar';
 import {useAppDispatch, useAppSelector} from '@/store/hooks';
 import {
   loadPrescriptions,
+  selectPrescriptions,
+  selectSelectedPrescription,
   selectPrescription,
   setDosageCount,
   selectDosageCount,
@@ -29,6 +31,9 @@ import {
   loadPrescriptionItems,
   checkPrescriptionAvailability,
   selectIsAvailable,
+  createPrescription,
+  updatePrescription,
+  deletePrescription,
 } from '@/store/slices/prescriptionSlice';
 import {executeTransaction} from '@/store/slices/inventorySlice';
 import {TransactionType} from '@/types';
@@ -133,7 +138,7 @@ export const PrescriptionScreen: React.FC = () => {
           </View>
         ) : (
           <ScrollView style={styles.scrollList}>
-            {prescriptions.map(prescription => (
+            {(prescriptions || []).map(prescription => (
               <List.Item
                 key={prescription.id}
                 title={prescription.name}
@@ -141,12 +146,32 @@ export const PrescriptionScreen: React.FC = () => {
                 left={props => (
                   <List.Icon {...props} icon="bottle-tonic" />
                 )}
-                right={props =>
-                  selectedPrescription?.id === prescription.id ? (
-                    <List.Icon {...props} icon="check" color={theme.colors.primary} />
-                  ) : null
-                }
+                right={props => (
+                  <View style={styles.itemActions}>
+                    <View style={styles.actionButtons}>
+                      <Icon
+                        name="pencil"
+                        size={20}
+                        color={theme.colors.primary}
+                        style={styles.actionIcon}
+                      />
+                      <Icon
+                        name="delete"
+                        size={20}
+                        color={theme.colors.error}
+                        style={styles.actionIcon}
+                      />
+                    </View>
+                    {selectedPrescription?.id === prescription.id && (
+                      <Icon name="check" size={24} color={theme.colors.primary} />
+                    )}
+                  </View>
+                )}
                 onPress={() => handleSelectPrescription(prescription)}
+                onLongPress={() => {
+                  // Long press to show edit/delete options
+                  console.log('Long press on prescription:', prescription.id);
+                }}
                 style={[
                   styles.listItem,
                   selectedPrescription?.id === prescription.id && styles.selectedListItem,
@@ -224,7 +249,11 @@ export const PrescriptionScreen: React.FC = () => {
           <Text variant="titleMedium" style={styles.sectionTitle}>
             成份
           </Text>
-          {items.map((item, index) => {
+          {(items || []).map((item, index) => {
+            if (!item?.medicine) {
+              return null;
+            }
+
             const totalRequired = item.quantity * dosageCount;
             const hasEnough = item.medicine.currentStock >= totalRequired;
 
@@ -247,10 +276,10 @@ export const PrescriptionScreen: React.FC = () => {
                   </View>
                 </View>
                 <View style={styles.ingredientDetails}>
-                  <Text variant="bodySmall} style={styles.ingredientLabel}>
+                  <Text variant="bodySmall" style={styles.ingredientLabel}>
                     每付: {item.quantity}{item.unit}
                   </Text>
-                  <Text variant="bodySmall} style={styles.ingredientLabel}>
+                  <Text variant="bodySmall" style={styles.ingredientLabel}>
                     需要: {totalRequired}{item.medicine.baseUnit}
                   </Text>
                   <Text
@@ -314,10 +343,6 @@ export const PrescriptionScreen: React.FC = () => {
     </View>
   );
 };
-
-const selectSelectedPrescription = (state: {
-  prescription: {selectedPrescription?: {id: string}};
-}) => state.prescription.selectedPrescription;
 
 const styles = StyleSheet.create({
   container: {
@@ -441,5 +466,17 @@ const styles = StyleSheet.create({
   },
   warningText: {
     color: '#D32F2F',
+  },
+  itemActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionIcon: {
+    marginHorizontal: 4,
   },
 });

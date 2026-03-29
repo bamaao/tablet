@@ -2,12 +2,74 @@
  * Audit Slice
  *
  * Manages inventory audit sessions and discrepancy tracking
+ * Uses SQLite for data persistence
  */
 
 import {createSlice, createAsyncThunk, PayloadAction} from '@reduxjs/toolkit';
-import {getDatabase} from '@/database';
-import {AuditState, AuditRecord as AuditRecordType, AuditSession as AuditSessionType} from '@/types';
-import Q from '@nozbe/watermelondb/Query';
+import {
+  createAuditSessionRepo,
+  createAuditRecord,
+  getAuditSessionById,
+  getAuditRecordsBySessionId,
+  completeAuditSession,
+  updateAuditSessionProgress,
+  AuditSessionRecord,
+  AuditRecordRecord,
+} from '@/database';
+import {getMedicineById, MedicineRecord} from '@/database';
+import {AuditState, AuditRecord as AuditRecordType, AuditSession as AuditSessionType, Medicine, UnitType} from '@/types';
+
+// ============================================================================
+// TYPE CONVERTERS
+// ============================================================================
+
+function sessionRecordToSession(record: AuditSessionRecord): AuditSessionType {
+  return {
+    id: record.id,
+    startedAt: record.started_at,
+    completedAt: record.completed_at ?? undefined,
+    status: record.status as 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED',
+    totalItems: record.total_items,
+    completedItems: record.completed_items,
+    items: [],
+  };
+}
+
+function medicineRecordToMedicine(record: MedicineRecord): Medicine {
+  return {
+    id: record.id,
+    name: record.name,
+    pinyin: record.pinyin ?? undefined,
+    category: record.category,
+    baseUnit: record.base_unit as UnitType,
+    packageUnit: record.package_unit,
+    packageSize: record.package_size,
+    currentStock: record.current_stock,
+    looseStock: record.loose_stock,
+    packagedStock: record.packaged_stock,
+    minStock: record.min_stock,
+    location: record.location ?? undefined,
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+  };
+}
+
+function auditRecordToType(record: AuditRecordRecord, medicine?: Medicine): AuditRecordType {
+  return {
+    id: record.id,
+    sessionId: record.session_id,
+    medicineId: record.medicine_id,
+    medicine: medicine,
+    expectedStock: record.expected_stock,
+    actualStock: record.actual_stock,
+    discrepancy: record.discrepancy,
+    unit: record.unit,
+    auditedAt: record.audited_at,
+    auditedBy: record.audited_by ?? undefined,
+    notes: record.notes ?? undefined,
+    resolved: record.resolved === 1,
+  };
+}
 
 // ============================================================================
 // INITIAL STATE
@@ -31,25 +93,8 @@ export const startAuditSession = createAsyncThunk(
   'audit/startSession',
   async (medicineIds: string[], {rejectWithValue}) => {
     try {
-      const database = getDatabase();
-      const sessionsCollection = database.get<any>('audit_sessions');
-
-      const session = await sessionsCollection.create(s => {
-        s.startedAt = new Date();
-        s.status = 'IN_PROGRESS';
-        s.totalItems = medicineIds.length;
-        s.completedItems = 0;
-      });
-
-      return {
-        id: session.id,
-        startedAt: session.startedAt,
-        completedAt: session.completedAt,
-        status: session.status,
-        totalItems: session.totalItems,
-        completedItems: session.completedItems,
-        items: [],
-      } as AuditSessionType;
+      const session = createAuditSessionRepo(medicineIds.length);
+      return sessionRecordToSession(session);
     } catch (error) {
       return rejectWithValue((error as Error).message);
     }
@@ -73,55 +118,27 @@ export const recordAuditEntry = createAsyncThunk(
     {rejectWithValue},
   ) => {
     try {
-      const database = getDatabase();
-      const recordsCollection = database.get<any>('audit_records');
-      const medicinesCollection = database.get('medicines');
+      const medicine = getMedicineById(payload.medicineId);
+      if (!medicine) {
+        throw new Error('药品不存在');
+      }
 
-      const medicine = await medicinesCollection.find(payload.medicineId);
-
-      const discrepancy = payload.actualStock - payload.expectedStock;
-
-      const record = await recordsCollection.create(r => {
-        r.sessionId = payload.sessionId;
-        r.medicineId = payload.medicineId;
-        r.expectedStock = payload.expectedStock;
-        r.actualStock = payload.actualStock;
-        r.discrepancy = discrepancy;
-        r.unit = payload.unit;
-        r.auditedAt = new Date();
-        r.notes = payload.notes;
-        r.resolved = false;
+      const record = createAuditRecord({
+        sessionId: payload.sessionId,
+        medicineId: payload.medicineId,
+        expectedStock: payload.expectedStock,
+        actualStock: payload.actualStock,
+        unit: payload.unit,
+        notes: payload.notes,
       });
 
-      return {
-        id: record.id,
-        sessionId: record.sessionId,
-        medicineId: record.medicineId,
-        medicine: {
-          id: medicine.id,
-          name: medicine.name,
-          pinyin: medicine.pinyin ?? undefined,
-          category: medicine.category,
-          baseUnit: medicine.baseUnit,
-          packageUnit: medicine.packageUnit,
-          packageSize: medicine.packageSize,
-          currentStock: medicine.currentStock,
-          looseStock: medicine.looseStock,
-          packagedStock: medicine.packagedStock,
-          minStock: medicine.minStock,
-          location: medicine.location ?? undefined,
-          createdAt: medicine.createdAt,
-          updatedAt: medicine.updatedAt,
-        },
-        expectedStock: record.expectedStock,
-        actualStock: record.actualStock,
-        discrepancy: record.discrepancy,
-        unit: record.unit,
-        auditedAt: record.auditedAt,
-        auditedBy: record.auditedBy,
-        notes: record.notes,
-        resolved: record.resolved,
-      } as AuditRecordType;
+      // Update session progress
+      const session = getAuditSessionById(payload.sessionId);
+      if (session) {
+        updateAuditSessionProgress(payload.sessionId, session.completed_items + 1);
+      }
+
+      return auditRecordToType(record, medicineRecordToMedicine(medicine));
     } catch (error) {
       return rejectWithValue((error as Error).message);
     }
@@ -135,25 +152,15 @@ export const loadAuditRecords = createAsyncThunk(
   'audit/loadRecords',
   async (sessionId: string, {rejectWithValue}) => {
     try {
-      const database = getDatabase();
-      const recordsCollection = database.get<any>('audit_records');
-      const records = await recordsCollection
-        .query(Q.where('session_id', sessionId))
-        .fetch();
+      const records = getAuditRecordsBySessionId(sessionId);
+      const result: AuditRecordType[] = [];
 
-      return records.map(r => ({
-        id: r.id,
-        sessionId: r.sessionId,
-        medicineId: r.medicineId,
-        expectedStock: r.expectedStock,
-        actualStock: r.actualStock,
-        discrepancy: r.discrepancy,
-        unit: r.unit,
-        auditedAt: r.auditedAt,
-        auditedBy: r.auditedBy,
-        notes: r.notes,
-        resolved: r.resolved,
-      })) as AuditRecordType[];
+      for (const record of records) {
+        const medicine = getMedicineById(record.medicine_id);
+        result.push(auditRecordToType(record, medicine ? medicineRecordToMedicine(medicine) : undefined));
+      }
+
+      return result;
     } catch (error) {
       return rejectWithValue((error as Error).message);
     }
@@ -163,27 +170,12 @@ export const loadAuditRecords = createAsyncThunk(
 /**
  * Complete audit session
  */
-export const completeAuditSession = createAsyncThunk(
+export const completeAuditSessionThunk = createAsyncThunk(
   'audit/completeSession',
   async (sessionId: string, {rejectWithValue}) => {
     try {
-      const database = getDatabase();
-      const sessionsCollection = database.get<any>('audit_sessions');
-      const session = await sessionsCollection.find(sessionId);
-
-      await session.update(s => {
-        s.completedAt = new Date();
-        s.status = 'COMPLETED';
-      });
-
-      return {
-        id: session.id,
-        startedAt: session.startedAt,
-        completedAt: session.completedAt,
-        status: session.status,
-        totalItems: session.totalItems,
-        completedItems: session.completedItems,
-      };
+      const session = completeAuditSessionRepo(sessionId);
+      return sessionRecordToSession(session);
     } catch (error) {
       return rejectWithValue((error as Error).message);
     }
@@ -198,16 +190,10 @@ const auditSlice = createSlice({
   name: 'audit',
   initialState,
   reducers: {
-    /**
-     * Set current record for editing
-     */
     setCurrentRecord: (state, action: PayloadAction<AuditRecordType | undefined>) => {
       state.currentRecord = action.payload;
     },
 
-    /**
-     * Clear current session
-     */
     clearSession: state => {
       state.currentSession = undefined;
       state.currentRecord = undefined;
@@ -216,7 +202,6 @@ const auditSlice = createSlice({
   },
   extraReducers: builder => {
     builder
-      // startAuditSession
       .addCase(startAuditSession.pending, state => {
         state.loading = true;
       })
@@ -228,7 +213,6 @@ const auditSlice = createSlice({
         state.loading = false;
       })
 
-      // recordAuditEntry
       .addCase(recordAuditEntry.pending, state => {
         state.loading = true;
       })
@@ -236,12 +220,10 @@ const auditSlice = createSlice({
         state.loading = false;
         state.currentRecord = action.payload;
 
-        // Add to discrepancies if there's a discrepancy
         if (action.payload.discrepancy !== 0) {
           state.discrepancies.push(action.payload);
         }
 
-        // Update session progress
         if (state.currentSession) {
           state.currentSession.completedItems += 1;
         }
@@ -250,13 +232,11 @@ const auditSlice = createSlice({
         state.loading = false;
       })
 
-      // loadAuditRecords
       .addCase(loadAuditRecords.fulfilled, (state, action) => {
         state.discrepancies = action.payload.filter(r => r.discrepancy !== 0);
       })
 
-      // completeAuditSession
-      .addCase(completeAuditSession.fulfilled, (state, action) => {
+      .addCase(completeAuditSessionThunk.fulfilled, (state, action) => {
         if (state.currentSession?.id === action.payload.id) {
           state.currentSession = {
             ...state.currentSession,
@@ -272,6 +252,9 @@ const auditSlice = createSlice({
 // ============================================================================
 
 export const {setCurrentRecord, clearSession} = auditSlice.actions;
+
+// Export for backward compatibility
+export { completeAuditSessionThunk as completeAuditSession };
 
 // ============================================================================
 // SELECTORS

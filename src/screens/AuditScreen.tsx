@@ -138,10 +138,10 @@ export const AuditScreen: React.FC = () => {
 
     return (
       <View style={styles.discrepanciesContainer}>
-        {discrepancies.map(record => (
+        {(discrepancies || []).map(record => (
           <View key={record.id} style={styles.discrepancyCard}>
             <View style={styles.discrepancyHeader}>
-              <Text variant="titleSmall} numberOfLines={1}>
+              <Text variant="titleSmall" numberOfLines={1}>
                 {record.medicine?.name || '未知药品'}
               </Text>
               <Text

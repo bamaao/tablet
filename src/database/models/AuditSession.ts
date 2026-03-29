@@ -6,6 +6,7 @@
 
 import {Model} from '@nozbe/watermelondb';
 import {field, date, children} from '@nozbe/watermelondb/decorators';
+import Q from '@nozbe/watermelondb/Query';
 import {AuditRecord} from './AuditRecord';
 
 export type AuditSessionStatus = 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';

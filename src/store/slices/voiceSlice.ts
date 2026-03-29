@@ -110,11 +110,11 @@ export const {
 // SELECTORS
 // ============================================================================
 
-export const selectIsListening = (state: {voice: VoiceState}) => state.voice.isListening;
-export const selectTranscript = (state: {voice: VoiceState}) => state.voice.transcript;
-export const selectLastCommand = (state: {voice: VoiceState}) => state.voice.lastCommand;
-export const selectVoiceError = (state: {voice: VoiceState}) => state.voice.error;
-export const selectPermissionGranted = (state: {voice: VoiceState}) => state.voice.permissionGranted;
+export const selectIsListening = (state: any) => state?.voice?.isListening ?? false;
+export const selectTranscript = (state: any) => state?.voice?.transcript ?? '';
+export const selectLastCommand = (state: any) => state?.voice?.lastCommand ?? undefined;
+export const selectVoiceError = (state: any) => state?.voice?.error ?? undefined;
+export const selectPermissionGranted = (state: any) => state?.voice?.permissionGranted ?? false;
 
 // ============================================================================
 // REDUCER

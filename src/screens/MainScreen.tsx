@@ -5,23 +5,19 @@
  * Provides access to Inventory, Audit, and Prescription screens.
  */
 
-import React, {useEffect} from 'react';
-import {View, StyleSheet} from 'react-native';
-import {NavigationContainer} from '@react-navigation/native';
+import React from 'react';
+import {View, StyleSheet, Text} from 'react-native';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
-import {PaperProvider, useTheme, Text, Snackbar, Dialog, Button} from 'react-native-paper';
+import {PaperProvider, useTheme, Snackbar, Dialog, Button} from 'react-native-paper';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import {SafeAreaView} from 'react-native-safe-area-context';
-import {database} from '@/database';
-import {seedDatabase} from '@/database';
-import {loadMedicines, loadPrescriptions} from '@/store';
-import {useAppDispatch} from '@/store/hooks';
+import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 import {InventoryScreen} from './InventoryScreen';
 import {AuditScreen} from './AuditScreen';
 import {PrescriptionScreen} from './PrescriptionScreen';
 import {SettingsScreen} from './SettingsScreen';
 import {selectToastMessage, selectErrorDialog, clearMessages} from '@/store/slices/uiSlice';
-import {useAppSelector} from '@/store/hooks';
+import {useAppSelector, useAppDispatch} from '@/store/hooks';
+import {loadMedicines, loadPrescriptions} from '@/store';
 
 const Tab = createBottomTabNavigator();
 
@@ -32,29 +28,16 @@ export const MainScreen: React.FC = () => {
   const toastMessage = useAppSelector(selectToastMessage);
   const errorDialog = useAppSelector(selectErrorDialog);
 
-  // Initialize database and load data
-  useEffect(() => {
-    const initializeApp = async () => {
-      try {
-        // Seed database with initial data (for development)
-        await seedDatabase();
-
-        // Load initial data
-        dispatch(loadMedicines());
-        dispatch(loadPrescriptions());
-      } catch (error) {
-        console.error('Failed to initialize app:', error);
-      }
-    };
-
-    initializeApp();
-  }, [dispatch]);
+  // TODO: Load data on mount after fixing database issues
+  // React.useEffect(() => {
+  //   dispatch(loadMedicines());
+  //   dispatch(loadPrescriptions());
+  // }, [dispatch]);
 
   return (
     <PaperProvider theme={theme}>
       <SafeAreaProvider>
-        <NavigationContainer>
-          <View style={styles.container}>
+        <View style={styles.container}>
             <Tab.Navigator
               screenOptions={{
                 headerStyle: {
@@ -147,8 +130,13 @@ export const MainScreen: React.FC = () => {
               </Dialog.Actions>
             </Dialog>
           </View>
-        </NavigationContainer>
       </SafeAreaProvider>
     </PaperProvider>
   );
 };
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+});

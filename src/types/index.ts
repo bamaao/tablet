@@ -57,8 +57,8 @@ export interface Medicine {
   packagedStock: number;           // 包装库存 (in packages, not base units)
   minStock: number;                // 最低库存预警 (in base units)
   location?: string;               // 存放位置
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: number;               // Unix timestamp (ms)
+  updatedAt: number;               // Unix timestamp (ms)
 }
 
 export interface StockTransaction {
@@ -67,11 +67,12 @@ export interface StockTransaction {
   type: TransactionType;
   quantity: number;                // 数量 (in base units for most operations)
   unit: UnitType;
+  packageSize?: number;            // 包装规格 (for package transactions)
   beforeStock: number;             // 操作前库存 (base units)
   afterStock: number;              // 操作后库存 (base units)
   referenceId?: string;            // 关联单据ID (prescription_id, audit_id, etc.)
   notes?: string;
-  createdAt: Date;
+  createdAt: number;               // Unix timestamp (ms)
   synced: boolean;                 // 是否已同步到服务器
 }
 
@@ -80,8 +81,8 @@ export interface Prescription {
   name: string;                    // 方剂名称 (e.g., "补中益气汤")
   pinyin?: string;
   description?: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: number;               // Unix timestamp (ms)
+  updatedAt: number;               // Unix timestamp (ms)
 }
 
 export interface PrescriptionItem {
@@ -95,12 +96,14 @@ export interface PrescriptionItem {
 
 export interface AuditRecord {
   id: string;
+  sessionId: string;
   medicineId: string;
+  medicine?: Medicine;
   expectedStock: number;           // 账面库存 (base units)
   actualStock: number;             // 实盘库存 (base units)
   discrepancy: number;             // 差异 (actual - expected)
   unit: UnitType;
-  auditedAt: Date;
+  auditedAt: number;               // Unix timestamp (ms)
   auditedBy?: string;
   notes?: string;
   resolved: boolean;               // 是否已处理差异
@@ -108,9 +111,11 @@ export interface AuditRecord {
 
 export interface AuditSession {
   id: string;
-  startedAt: Date;
-  completedAt?: Date;
+  startedAt: number;               // Unix timestamp (ms)
+  completedAt?: number;            // Unix timestamp (ms)
   status: 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  totalItems: number;
+  completedItems: number;
   items: AuditRecord[];
 }
 

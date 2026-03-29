@@ -12,7 +12,8 @@ import {
   Pressable,
   Animated,
 } from 'react-native';
-import {IconButton, Text, useTheme} from 'react-native-paper';
+import {Text, useTheme} from 'react-native-paper';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {useAppDispatch, useAppSelector} from '@/store/hooks';
 import {
   startListening,
@@ -20,6 +21,9 @@ import {
   updateTranscript,
   setCommand,
   setError,
+  selectIsListening,
+  selectTranscript,
+  selectPermissionGranted,
 } from '@/store/slices/voiceSlice';
 import {parseVoiceCommand} from '@/utils/voice/CommandParser';
 import {VoiceService} from '@/services/VoiceService';
@@ -27,7 +31,7 @@ import {TTSService} from '@/services/TTSService';
 
 export const VoiceBar: React.FC = () => {
   const theme = useTheme();
-  const dispatch = useDispatch();
+  const dispatch = useAppDispatch();
 
   const isListening = useAppSelector(selectIsListening);
   const transcript = useAppSelector(selectTranscript);
@@ -179,11 +183,10 @@ export const VoiceBar: React.FC = () => {
           ]}
           accessibilityLabel={isListening ? '停止录音' : '开始录音'}
           accessibilityRole="button">
-          <IconButton
-            icon={isListening ? 'microphone-off' : 'microphone'}
+          <Icon
+            name={isListening ? 'stop-circle' : 'microphone'}
             size={32}
-            iconColor={isListening ? '#FFFFFF' : theme.colors.primary}
-            style={styles.micIcon}
+            color={isListening ? '#FFFFFF' : theme.colors.primary}
           />
         </Pressable>
       </View>
@@ -200,12 +203,6 @@ export const VoiceBar: React.FC = () => {
     </View>
   );
 };
-
-const useDispatch = require('@/store/hooks').useAppDispatch;
-const selectIsListening = (state: {voice: {isListening: boolean}}) => state.voice.isListening;
-const selectTranscript = (state: {voice: {transcript: string}}) => state.voice.transcript;
-const selectPermissionGranted = (state: {voice: {permissionGranted: boolean}}) =>
-  state.voice.permissionGranted;
 
 const styles = StyleSheet.create({
   container: {
@@ -269,9 +266,6 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.7,
     transform: [{scale: 0.95}],
-  },
-  micIcon: {
-    margin: 0,
   },
   statusContainer: {
     position: 'absolute',

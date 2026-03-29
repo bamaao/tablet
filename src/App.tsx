@@ -1,5 +1,6 @@
 import React from 'react';
-import {StatusBar, SafeAreaProvider} from 'react-native';
+import {StatusBar} from 'react-native';
+import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {Provider} from 'react-redux';
 import {PaperProvider, MD3LightTheme} from 'react-native-paper';
 import {store} from './store';
@@ -33,4 +34,4 @@ function App(): React.JSX.Element {
   );
 }
 
-export default React.memo(App);
+export default App;

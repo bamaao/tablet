@@ -2,83 +2,124 @@
  * InboundForm Component
  *
  * Form for recording stock incoming (入库) operations.
- * Supports both packaged and loose stock entry.
+ * Redesigned according to UI prototype with blue theme.
+ * Supports both packaged and loose stock entry with multi-specification.
  */
 
-import React, {useState} from 'react';
-import {View, StyleSheet, KeyboardAvoidingView, Platform} from 'react-native';
+import React, {useState, useMemo} from 'react';
+import {View, StyleSheet, KeyboardAvoidingView, Platform, ScrollView} from 'react-native';
 import {
   TextInput,
   Button,
   Text,
   Divider,
   SegmentedButtons,
+  useTheme,
+  Card,
 } from 'react-native-paper';
-import {ScrollView} from 'react-native-gesture-handler';
 import {useAppDispatch, useAppSelector} from '@/store/hooks';
-import {executeTransaction, selectSelectedMedicine, selectInventoryLoading} from '@/store/slices/inventorySlice';
+import {
+  executeTransaction,
+  selectSelectedMedicine,
+  selectInventoryLoading,
+  selectPackagedStockBySize,
+} from '@/store/slices/inventorySlice';
 import {TransactionType, UnitType} from '@/types';
-import {UnitSelector} from '@/components/inventory/UnitSelector';
 import {showToast, showError} from '@/store/slices/uiSlice';
 
+// Theme colors
+const COLORS = {
+  primary: '#1976D2',
+  background: '#E3F2FD',
+  success: '#00A67D',
+  text: '#333333',
+  textSecondary: '#666666',
+  textLight: '#999999',
+  border: '#E0E0E0',
+  white: '#FFFFFF',
+};
+
+type InboundType = 'packaged' | 'loose';
+
 export const InboundForm: React.FC = () => {
+  const theme = useTheme();
   const dispatch = useAppDispatch();
   const selectedMedicine = useAppSelector(selectSelectedMedicine);
   const loading = useAppSelector(selectInventoryLoading);
+  const packagedStockBySize = useAppSelector(state =>
+    selectedMedicine ? selectPackagedStockBySize(state, selectedMedicine.id) : []
+  );
 
-  const [quantity, setQuantity] = useState('0');
-  const [stockType, setStockType] = useState<'packaged' | 'loose'>('loose');
-  const [unit, setUnit] = useState<UnitType>('g');
-  const [packageSize, setPackageSize] = useState<string>(''); // Package size in grams
+  const [inboundType, setInboundType] = useState<InboundType>('packaged');
+  const [quantity, setQuantity] = useState('');
+  const [packageSize, setPackageSize] = useState('');
   const [notes, setNotes] = useState('');
 
-  // Update unit based on stock type
+  // Initialize package size when medicine is selected
   React.useEffect(() => {
     if (selectedMedicine) {
-      if (stockType === 'packaged') {
-        setUnit(selectedMedicine.packageUnit as UnitType);
-        // Initialize packageSize with medicine default if empty
-        if (!packageSize) {
-          setPackageSize(String(selectedMedicine.packageSize));
-        }
-      } else {
-        setUnit(selectedMedicine.baseUnit as UnitType);
-      }
+      setPackageSize(String(selectedMedicine.packageSize));
     }
-  }, [stockType, selectedMedicine, packageSize]);
+  }, [selectedMedicine]);
+
+  // Calculate total grams for packaged inbound
+  const totalGrams = useMemo(() => {
+    if (inboundType === 'packaged' && quantity && packageSize) {
+      return parseFloat(quantity) * parseFloat(packageSize);
+    }
+    return 0;
+  }, [inboundType, quantity, packageSize]);
 
   // Validate form
-  const isValid = selectedMedicine && parseFloat(quantity) > 0;
+  const isValid = useMemo(() => {
+    if (!selectedMedicine) return false;
+    const qty = parseFloat(quantity);
+    if (isNaN(qty) || qty <= 0) return false;
+
+    if (inboundType === 'packaged') {
+      const pkgSize = parseFloat(packageSize);
+      return !isNaN(pkgSize) && pkgSize > 0;
+    }
+
+    return true;
+  }, [selectedMedicine, quantity, inboundType, packageSize]);
 
   // Handle submit
   const handleSubmit = async () => {
-    if (!isValid || !selectedMedicine) return;
+    console.log('handleSubmit called, isValid:', isValid, 'selectedMedicine:', selectedMedicine?.name, 'quantity:', quantity);
+    if (!isValid || !selectedMedicine) {
+      console.log('Form validation failed or no medicine selected');
+      return;
+    }
 
     try {
-      const txnParams: any = {
-        medicineId: selectedMedicine.id,
-        type: TransactionType.INBOUND,
-        quantity: parseFloat(quantity),
-        unit,
-        notes: `${stockType === 'packaged' ? '包装' : '散装'}入库 - ${notes}`,
-      };
+      const qty = parseFloat(quantity);
 
-      // Add packageSize for packaged units
-      if (stockType === 'packaged' && packageSize) {
-        txnParams.packageSize = parseFloat(packageSize);
+      if (inboundType === 'packaged') {
+        const pkgSize = parseFloat(packageSize);
+        await dispatch(executeTransaction({
+          medicineId: selectedMedicine.id,
+          type: TransactionType.INBOUND,
+          quantity: qty,
+          unit: selectedMedicine.packageUnit as UnitType,
+          packageSize: pkgSize,
+          notes: `包装入库 - ${notes}`,
+        })).unwrap();
+
+        dispatch(showToast(`已入库 ${selectedMedicine.name} ${qty}包 × ${pkgSize}g = ${totalGrams}g`));
+      } else {
+        await dispatch(executeTransaction({
+          medicineId: selectedMedicine.id,
+          type: TransactionType.INBOUND,
+          quantity: qty,
+          unit: selectedMedicine.baseUnit as UnitType,
+          notes: `散装入库 - ${notes}`,
+        })).unwrap();
+
+        dispatch(showToast(`已入库 ${selectedMedicine.name} ${qty}${selectedMedicine.baseUnit}`));
       }
 
-      await dispatch(executeTransaction(txnParams)).unwrap();
-
-      const totalDisplay = stockType === 'packaged'
-        ? `${quantity}包 × ${packageSize}${selectedMedicine.baseUnit} = ${parseFloat(quantity) * parseFloat(packageSize)}${selectedMedicine.baseUnit}`
-        : `${quantity}${unit}`;
-
-      dispatch(
-        showToast(`已入库 ${selectedMedicine.name} ${totalDisplay}`),
-      );
-
-      setQuantity('0');
+      setQuantity('');
       setNotes('');
     } catch (error) {
       dispatch(showError((error as Error).message));
@@ -88,14 +129,22 @@ export const InboundForm: React.FC = () => {
   if (!selectedMedicine) {
     return (
       <View style={styles.emptyContainer}>
-        <Text variant="bodyLarge" style={styles.emptyText}>
-          请先选择要入库的药品
+        <View style={[styles.emptyIcon, {backgroundColor: COLORS.background}]}>
+          <Text style={[styles.emptyIconText, {color: COLORS.primary}]}>📦</Text>
+        </View>
+        <Text variant="titleMedium" style={styles.emptyTitle}>入库操作</Text>
+        <Text variant="bodyMedium" style={styles.emptyText}>
+          请先从左侧列表选择要入库的药品
         </Text>
       </View>
     );
   }
 
-  const quickQuantities: string[] = stockType === 'packaged' ? ['1', '5', '10'] : ['100', '500', '1000'];
+  const quickQuantities = inboundType === 'packaged'
+    ? ['1', '5', '10']
+    : ['100', '500', '1000'];
+
+  const quickPackageSizes = ['250', '500'];
 
   return (
     <KeyboardAvoidingView
@@ -104,36 +153,64 @@ export const InboundForm: React.FC = () => {
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled">
-        {/* Medicine Info */}
-        <View style={styles.section}>
-          <Text variant="titleMedium" style={styles.sectionTitle}>
-            {selectedMedicine.name}
-          </Text>
-          <Text variant="bodyMedium" style={styles.sectionSubtitle}>
-            规格: {selectedMedicine.packageSize}{selectedMedicine.baseUnit}/{selectedMedicine.packageUnit}
-          </Text>
-          <Text variant="bodyMedium" style={styles.sectionSubtitle}>
-            当前库存 - 包装: {selectedMedicine.packagedStock}{selectedMedicine.packageUnit}
-          </Text>
-          <Text variant="bodyMedium" style={styles.sectionSubtitle}>
-            当前库存 - 散装: {selectedMedicine.looseStock}{selectedMedicine.baseUnit}
-          </Text>
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={true}>
+
+        {/* Current Stock Display */}
+        <View style={styles.stockInfoSection}>
+          <Text variant="titleMedium" style={styles.sectionTitle}>当前库存</Text>
+          <View style={styles.stockGrid}>
+            {packagedStockBySize.length > 0 ? (
+              packagedStockBySize.map(({ packageSize: size, count }) => (
+                <View key={size} style={styles.stockItem}>
+                  <Text variant="bodyMedium" style={styles.stockLabel}>
+                    {size}g/包
+                  </Text>
+                  <Text variant="titleMedium" style={[styles.stockValue, {color: COLORS.success}]}>
+                    {count}包
+                  </Text>
+                </View>
+              ))
+            ) : (
+              <View style={styles.stockItem}>
+                <Text variant="bodyMedium" style={styles.stockLabel}>
+                  包装
+                </Text>
+                <Text variant="titleMedium" style={[styles.stockValue, {color: COLORS.success}]}>
+                  {selectedMedicine.packagedStock}{selectedMedicine.packageUnit}
+                </Text>
+              </View>
+            )}
+            <View style={styles.stockItem}>
+              <Text variant="bodyMedium" style={styles.stockLabel}>
+                散装
+              </Text>
+              <Text variant="titleMedium" style={[styles.stockValue, {color: COLORS.success}]}>
+                {selectedMedicine.looseStock}{selectedMedicine.baseUnit}
+              </Text>
+            </View>
+          </View>
         </View>
 
-        <Divider />
+        <Divider style={styles.divider} />
 
-        {/* Stock Type Selection */}
+        {/* Inbound Type Selection */}
         <View style={styles.section}>
-          <Text variant="titleMedium" style={styles.sectionTitle}>
-            入库类型
-          </Text>
+          <Text variant="titleMedium" style={styles.sectionTitle}>入库类型</Text>
           <SegmentedButtons
-            value={stockType}
-            onValueChange={(value) => setStockType(value as 'packaged' | 'loose')}
+            value={inboundType}
+            onValueChange={(value) => setInboundType(value as InboundType)}
             buttons={[
-              {label: '散装入库', value: 'loose'},
-              {label: '包装入库', value: 'packaged'},
+              {
+                label: '包装入库',
+                value: 'packaged',
+                style: inboundType === 'packaged' && styles.activeSegment,
+              },
+              {
+                label: '散装入库',
+                value: 'loose',
+                style: inboundType === 'loose' && styles.activeSegment,
+              },
             ]}
             style={styles.segmentedButtons}
           />
@@ -143,19 +220,26 @@ export const InboundForm: React.FC = () => {
         <View style={styles.section}>
           <Text variant="titleMedium" style={styles.sectionTitle}>
             入库数量
+            {inboundType === 'packaged' ? ' (包)' : ` (${selectedMedicine.baseUnit})`}
           </Text>
 
           <TextInput
             value={quantity}
-            onChangeText={setQuantity}
+            onChangeText={(text) => {
+              console.log('Quantity changed:', text);
+              setQuantity(text);
+            }}
             keyboardType="decimal-pad"
-            label="数量"
             mode="outlined"
             style={styles.input}
+            placeholder={inboundType === 'packaged' ? '输入包数' : '输入克数'}
+            placeholderTextColor={COLORS.textLight}
+            outlineColor={COLORS.border}
+            activeOutlineColor={COLORS.primary}
             autoFocus
+            selectTextOnFocus
           />
 
-          {/* Quick Quantity Buttons */}
           <View style={styles.quickButtons}>
             {quickQuantities.map(q => (
               <Button
@@ -163,74 +247,68 @@ export const InboundForm: React.FC = () => {
                 mode="outlined"
                 onPress={() => setQuantity(q)}
                 style={styles.quickButton}
-                compact>
+                textColor={COLORS.primary}
+                contentStyle={styles.quickButtonContent}>
                 {q}
               </Button>
             ))}
           </View>
         </View>
 
-        {/* Package Size Input (only for packaged units) */}
-        {stockType === 'packaged' && (
-          <View style={styles.section}>
-            <Text variant="titleMedium" style={styles.sectionTitle}>
-              包装规格（克/包）
-            </Text>
-
-            <TextInput
-              value={packageSize}
-              onChangeText={setPackageSize}
-              keyboardType="number-pad"
-              label="每包规格"
-              mode="outlined"
-              style={styles.input}
-              placeholder={`默认: ${selectedMedicine.packageSize}`}
-            />
-
-            {/* Quick Package Size Buttons */}
-            <View style={styles.quickButtons}>
-              <Button
-                mode="outlined"
-                onPress={() => setPackageSize(String(selectedMedicine.packageSize))}
-                style={styles.quickButton}
-                compact>
-                默认
-              </Button>
-              <Button
-                mode="outlined"
-                onPress={() => setPackageSize('250')}
-                style={styles.quickButton}
-                compact>
-                250g
-              </Button>
-              <Button
-                mode="outlined"
-                onPress={() => setPackageSize('500')}
-                style={styles.quickButton}
-                compact>
-                500g
-              </Button>
-            </View>
-
-            {/* Calculation Display */}
-            {quantity && packageSize && (
-              <Text variant="bodyMedium" style={styles.calculationText}>
-                共计: {quantity} 包 × {packageSize} {selectedMedicine.baseUnit}/包 = {parseFloat(quantity) * parseFloat(packageSize)} {selectedMedicine.baseUnit}
-              </Text>
-            )}
-          </View>
-        )}
-
-        {/* Unit Display (auto-selected based on stock type) */}
+        {/* Package Size Input - ALWAYS visible */}
         <View style={styles.section}>
-          <Text variant="titleMedium" style={styles.sectionTitle}>
-            单位: {unit}
-          </Text>
-          <Text variant="bodyMedium" style={styles.unitInfo}>
-            {stockType === 'packaged'
-              ? `每包${selectedMedicine.packageSize}${selectedMedicine.baseUnit}`
-              : `散装单位`}
-          </Text>
+          <Text variant="titleMedium" style={styles.sectionTitle}>包装规格 (克/包)</Text>
+
+          <TextInput
+            value={packageSize}
+            onChangeText={(text) => {
+              console.log('PackageSize changed:', text);
+              setPackageSize(text);
+            }}
+            keyboardType="number-pad"
+            mode="outlined"
+            style={styles.input}
+            placeholder="输入每包克数"
+            placeholderTextColor={COLORS.textLight}
+            outlineColor={COLORS.border}
+            activeOutlineColor={COLORS.primary}
+          />
+
+          <View style={styles.quickButtons}>
+            <Button
+              mode="outlined"
+              onPress={() => setPackageSize(String(selectedMedicine.packageSize))}
+              style={styles.quickButton}
+              textColor={COLORS.primary}
+              contentStyle={styles.quickButtonContent}>
+              默认
+            </Button>
+            {quickPackageSizes.map(size => (
+              <Button
+                key={size}
+                mode="outlined"
+                onPress={() => setPackageSize(size)}
+                style={styles.quickButton}
+                textColor={COLORS.primary}
+                contentStyle={styles.quickButtonContent}>
+                {size}g
+              </Button>
+            ))}
+          </View>
+
+          {/* Calculation Display */}
+          {quantity && packageSize && (
+            <Card style={styles.calculationCard}>
+              <Card.Content style={styles.calculationContent}>
+                <Text variant="titleSmall" style={styles.calculationTitle}>
+                  共计
+                </Text>
+                <Text variant="bodyLarge" style={styles.calculationText}>
+                  {quantity} 包 × {packageSize} g/包 = {totalGrams} g
+                </Text>
+              </Card.Content>
+            </Card>
+          )}
         </View>
 
         {/* Notes */}
@@ -241,24 +319,28 @@ export const InboundForm: React.FC = () => {
             label="备注（可选）"
             mode="outlined"
             multiline
-            numberOfLines={3}
-            style={styles.input}
-            keyboardType="default"
-            autoCorrect={true}
-            autoCapitalize="sentences"
+            numberOfLines={2}
+            style={styles.notesInput}
+            placeholder="添加备注信息"
+            placeholderTextColor={COLORS.textLight}
+            outlineColor={COLORS.border}
+            activeOutlineColor={COLORS.primary}
           />
         </View>
 
-        {/* Submit Button */}
-        <Button
-          mode="contained"
-          onPress={handleSubmit}
-          disabled={!isValid || loading}
-          loading={loading}
-          style={styles.submitButton}
-          contentStyle={styles.submitButtonContent}>
-          确认入库
-        </Button>
+        {/* Submit Button - Always visible */}
+        <View style={styles.buttonContainer}>
+          <Button
+            mode="contained"
+            onPress={handleSubmit}
+            disabled={!isValid || loading}
+            loading={loading}
+            style={styles.submitButton}
+            buttonColor={COLORS.primary}
+            contentStyle={styles.submitButtonContent}>
+            确认入库
+          </Button>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -267,63 +349,134 @@ export const InboundForm: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.white,
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    padding: 16,
+    padding: 20,
   },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    padding: 40,
+    gap: 16,
+  },
+  emptyIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyIconText: {
+    fontSize: 36,
+  },
+  emptyTitle: {
+    fontWeight: '600',
+    color: COLORS.text,
+    marginBottom: 8,
   },
   emptyText: {
-    color: '#999',
+    color: COLORS.textSecondary,
+    textAlign: 'center',
   },
-  section: {
-    marginBottom: 24,
+  stockInfoSection: {
+    marginBottom: 20,
   },
   sectionTitle: {
     fontWeight: '600',
-    marginBottom: 8,
+    color: COLORS.text,
+    marginBottom: 12,
   },
-  sectionSubtitle: {
-    color: '#666',
+  stockGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
+  stockItem: {
+    backgroundColor: COLORS.background,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  stockLabel: {
+    color: COLORS.textSecondary,
     marginBottom: 4,
   },
+  stockValue: {
+    fontWeight: '600',
+    color: COLORS.success,
+  },
+  divider: {
+    marginVertical: 16,
+  },
+  section: {
+    marginBottom: 20,
+  },
   segmentedButtons: {
-    marginBottom: 16,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  activeSegment: {
+    backgroundColor: COLORS.primary,
   },
   input: {
-    marginBottom: 8,
+    backgroundColor: COLORS.white,
+    marginBottom: 12,
   },
   quickButtons: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
+    gap: 12,
+    marginTop: 12,
   },
   quickButton: {
     flex: 1,
+    borderColor: COLORS.primary,
+    borderRadius: 8,
   },
-  unitInfo: {
-    color: '#666',
+  quickButtonContent: {
+    paddingVertical: 8,
+  },
+  calculationCard: {
+    marginTop: 16,
+    backgroundColor: COLORS.background,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+  },
+  calculationContent: {
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  calculationTitle: {
+    fontWeight: '600',
+    color: COLORS.primary,
+    marginBottom: 8,
   },
   calculationText: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: '#E3F2FD',
-    borderRadius: 8,
-    color: '#1565C0',
-    fontWeight: '500',
+    fontWeight: '600',
+    color: COLORS.primary,
+    fontSize: 18,
+  },
+  notesInput: {
+    backgroundColor: COLORS.white,
+    minHeight: 60,
   },
   submitButton: {
-    marginTop: 8,
+    borderRadius: 8,
   },
   submitButtonContent: {
-    paddingVertical: 8,
+    paddingVertical: 12,
+  },
+  buttonContainer: {
+    marginTop: 24,
+    marginBottom: 32,
+    paddingHorizontal: 4,
   },
 });

@@ -1,13 +1,18 @@
-module.exports = {
-  presets: ['module:@react-native/babel-preset'],
-  plugins: [
-    [
-      '@nozbe/watermelondb/decorators',
-      {
-        // Enable WatermelonDB decorators
-        imports: true,
-      },
+module.exports = function (api) {
+  api.cache(true);
+  return {
+    presets: [
+      [
+        'module:@react-native/babel-preset',
+        {
+          useTransformReactJSX: true,
+          lazyImport: true,
+        },
+      ],
     ],
-    '@babel/plugin-proposal-decorators',
-  ],
+    plugins: [
+      ['@babel/plugin-proposal-decorators', {legacy: true}],
+      'react-native-reanimated/plugin',
+    ],
+  };
 };

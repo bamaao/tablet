@@ -2,41 +2,54 @@
  * OutboundForm Component
  *
  * Form for recording stock outbound (出库) operations.
- * Supports both packaged and loose stock removal with proper validation.
+ * Redesigned according to UI prototype with orange theme (#FF6600).
+ * Supports both simple mode and smart mode with intelligent package combination.
  */
 
 import React, {useState, useEffect, useMemo} from 'react';
-import {View, StyleSheet, KeyboardAvoidingView, Platform} from 'react-native';
+import {View, StyleSheet, KeyboardAvoidingView, Platform, ScrollView} from 'react-native';
 import {
   TextInput,
   Button,
   Text,
   Divider,
   SegmentedButtons,
-  ProgressBar,
   useTheme,
   Card,
 } from 'react-native-paper';
-import {ScrollView} from 'react-native-gesture-handler';
 import {useAppDispatch, useAppSelector} from '@/store/hooks';
 import {
   executeTransaction,
   selectSelectedMedicine,
   selectInventoryLoading,
   selectPackagedStockBySize,
-  PackagedStockBySize,
 } from '@/store/slices/inventorySlice';
 import {TransactionType, UnitType} from '@/types';
 import {
-  convertToBaseUnits,
-  convertFromBaseUnits,
+  convertToBaseUnits
 } from '@/utils/conversion/UnitConverter';
 import {showToast, showError} from '@/store/slices/uiSlice';
 import {
   calculateOptimalOutboundPlan,
   formatOutboundPlan,
-  getOutboundPlanSummary,
+  getOutboundPlanSummary
 } from '@/utils/conversion/OutboundCalculator';
+
+// Theme colors (Orange theme)
+const COLORS = {
+  primary: '#FF6600',     // Orange
+  background: '#FFF3E0',  // Light orange
+  success: '#00A67D',     // Green
+  smartPlan: '#E6F7F0', // Light green for smart plan
+  text: '#333333',
+  textSecondary: '#666666',
+  textLight: '#999999',
+  border: '#E0E0E0',
+  white: '#FFFFFF',
+  error: '#F44336',
+};
+
+type OutboundMode = 'simple' | 'smart';
 
 export const OutboundForm: React.FC = () => {
   const theme = useTheme();
@@ -47,13 +60,13 @@ export const OutboundForm: React.FC = () => {
 
   // Get packaged stock grouped by size
   const packagedStockBySize = useAppSelector(state =>
-    selectedMedicine ? selectPackagedStockBySize(state, selectedMedicine.id) : [],
+    selectedMedicine ? selectPackagedStockBySize(state, selectedMedicine.id) : []
   );
 
   // Outbound mode: simple (traditional) or smart (intelligent mixed outbound)
-  const [outboundMode, setOutboundMode] = useState<'simple' | 'smart'>('smart');
+  const [outboundMode, setOutboundMode] = useState<OutboundMode>('smart');
 
-  const [quantity, setQuantity] = useState('0');
+  const [quantity, setQuantity] = useState('');
   const [stockType, setStockType] = useState<'packaged' | 'loose'>('loose');
   const [unit, setUnit] = useState<UnitType>('g');
   const [notes, setNotes] = useState('');
@@ -66,33 +79,21 @@ export const OutboundForm: React.FC = () => {
       } else {
         setUnit(selectedMedicine.baseUnit as UnitType);
       }
-      setQuantity('0'); // Reset quantity when changing type
+      setQuantity('');
     }
   }, [stockType, selectedMedicine]);
 
   // Calculate stock availability
-  const [stockAvailable, setStockAvailable] = useState(true);
-  const [requiredStock, setRequiredStock] = useState(0);
+  const stockAvailable = useMemo(() => {
+    if (!selectedMedicine || !quantity) return true;
+    const qty = parseFloat(quantity);
+    if (qty <= 0) return true;
 
-  useEffect(() => {
-    if (selectedMedicine && quantity) {
-      const qty = parseFloat(quantity);
-      if (qty > 0) {
-        const baseQty = convertToBaseUnits(qty, unit, selectedMedicine.packageSize);
-
-        if (stockType === 'packaged') {
-          // Check packaged stock availability
-          setStockAvailable(selectedMedicine.packagedStock >= qty);
-          setRequiredStock(qty); // Package count
-        } else {
-          // Check loose stock availability
-          setStockAvailable(selectedMedicine.looseStock >= baseQty);
-          setRequiredStock(baseQty); // Base units
-        }
-      } else {
-        setStockAvailable(true);
-        setRequiredStock(0);
-      }
+    if (stockType === 'packaged') {
+      return selectedMedicine.packagedStock >= qty;
+    } else {
+      const baseQty = convertToBaseUnits(qty, unit, selectedMedicine.packageSize);
+    return selectedMedicine.looseStock >= baseQty;
     }
   }, [selectedMedicine, quantity, unit, stockType]);
 
@@ -111,25 +112,15 @@ export const OutboundForm: React.FC = () => {
         selectedMedicine.packageSize,
       );
 
-      const plan = calculateOptimalOutboundPlan(
+      return calculateOptimalOutboundPlan(
         packagedStockBySize,
         selectedMedicine.looseStock,
         requiredQty,
         'optimal',
       );
-
-      return plan;
     }
     return null;
   }, [outboundMode, selectedMedicine, quantity, unit, packagedStockBySize]);
-
-  // Get plan summary for smart mode
-  const planSummary = useMemo(() => {
-    if (outboundPlan && outboundPlan.isFeasible) {
-      return getOutboundPlanSummary(outboundPlan);
-    }
-    return null;
-  }, [outboundPlan]);
 
   // Validate form
   const isValid = useMemo(() => {
@@ -138,10 +129,8 @@ export const OutboundForm: React.FC = () => {
     }
 
     if (outboundMode === 'smart') {
-      // For smart mode, check if plan is feasible
       return outboundPlan?.isFeasible || false;
     } else {
-      // For simple mode, check stock availability
       return stockAvailable;
     }
   }, [selectedMedicine, quantity, stockAvailable, outboundMode, outboundPlan]);
@@ -154,39 +143,34 @@ export const OutboundForm: React.FC = () => {
       if (outboundMode === 'smart' && outboundPlan && outboundPlan.isFeasible) {
         // Smart mode: Execute multiple transactions for each item in the plan
         for (const item of outboundPlan.items) {
-          await dispatch(
-            executeTransaction({
-              medicineId: selectedMedicine.id,
-              type: TransactionType.OUTBOUND,
-              quantity: item.quantity,
-              unit: item.unit,
-              packageSize: item.packageSize ?? undefined,
-              notes: `智能出库 - ${notes}`,
-            }),
-          ).unwrap();
+          await dispatch(executeTransaction({
+            medicineId: selectedMedicine.id,
+            type: TransactionType.OUTBOUND,
+            quantity: item.quantity,
+            unit: item.unit,
+            packageSize: item.packageSize ?? undefined,
+            notes: `智能出库 - ${notes}`,
+          })).unwrap();
         }
 
-        // Format summary for toast
         const summary = formatOutboundPlan(outboundPlan);
         dispatch(showToast(`已出库 ${selectedMedicine.name} - ${summary}`));
 
-        setQuantity('0');
+        setQuantity('');
         setNotes('');
       } else {
         // Simple mode: Traditional single transaction
-        await dispatch(
-          executeTransaction({
-            medicineId: selectedMedicine.id,
-            type: TransactionType.OUTBOUND,
-            quantity: parseFloat(quantity),
-            unit,
-            notes: `${stockType === 'packaged' ? '包装' : '散装'}出库 - ${notes}`,
-          }),
-        ).unwrap();
+        await dispatch(executeTransaction({
+          medicineId: selectedMedicine.id,
+          type: TransactionType.OUTBOUND,
+          quantity: parseFloat(quantity),
+          unit,
+          notes: `${stockType === 'packaged' ? '包装' : '散装'}出库 - ${notes}`,
+        })).unwrap();
 
         dispatch(showToast(`已出库 ${selectedMedicine.name} ${quantity}${unit}`));
 
-        setQuantity('0');
+        setQuantity('');
         setNotes('');
       }
     } catch (error) {
@@ -197,13 +181,18 @@ export const OutboundForm: React.FC = () => {
   if (!selectedMedicine) {
     return (
       <View style={styles.emptyContainer}>
-        <Text variant="bodyLarge" style={styles.emptyText}>
-          请先选择要出库的药品
+        <View style={[styles.emptyIcon, {backgroundColor: COLORS.background}]}>
+          <Text style={[styles.emptyIconText, {color: COLORS.primary}]}>📤</Text>
+        </View>
+        <Text variant="titleMedium" style={styles.emptyTitle}>出库操作</Text>
+        <Text variant="bodyMedium" style={styles.emptyText}>
+          请先从左侧列表选择要出库的药品
         </Text>
       </View>
     );
   }
 
+  // Current stock display
   const currentStock = stockType === 'packaged'
     ? selectedMedicine.packagedStock
     : selectedMedicine.looseStock;
@@ -212,13 +201,14 @@ export const OutboundForm: React.FC = () => {
     ? `${selectedMedicine.packagedStock}${selectedMedicine.packageUnit}`
     : `${selectedMedicine.looseStock}${selectedMedicine.baseUnit}`;
 
+  // Quick quantities
   const quickQuantities = stockType === 'packaged'
     ? selectedMedicine.packagedStock > 0
       ? ['1', '2', '5'].filter(q => parseInt(q) <= selectedMedicine.packagedStock)
       : ['1']
     : selectedMedicine.looseStock >= 1000
-    ? ['100', '500', '1000']
-    : ['50', '100', '200'];
+      ? ['100', '500', '1000']
+      : ['50', '100', '200'];
 
   return (
     <KeyboardAvoidingView
@@ -227,74 +217,79 @@ export const OutboundForm: React.FC = () => {
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled">
-        {/* Medicine Info */}
-        <View style={styles.section}>
-          <Text variant="titleMedium" style={styles.sectionTitle}>
-            {selectedMedicine.name}
-          </Text>
-          <Text variant="bodyMedium" style={styles.sectionSubtitle}>
-            规格: {selectedMedicine.packageSize}{selectedMedicine.baseUnit}/{selectedMedicine.packageUnit}
-          </Text>
-          <View style={styles.stockInfoRow}>
-            <Text variant="bodyMedium" style={styles.stockLabel}>
-              散装库存: {selectedMedicine.looseStock}{selectedMedicine.baseUnit}
-            </Text>
-          </View>
-          {/* Display packaged stock by specification */}
-          {packagedStockBySize.length > 0 ? (
-            <View style={styles.packageSpecContainer}>
-              <Text variant="bodyMedium" style={styles.stockLabel}>
-                包装库存:
-              </Text>
-              {packagedStockBySize.map(({ packageSize, count }) => (
-                <Text key={packageSize} variant="bodyMedium" style={styles.packageSpecText}>
-                  • {packageSize}g/包 × {count}包
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}>
+
+        {/* Current Stock Display */}
+        <View style={styles.stockInfoSection}>
+          <Text variant="titleMedium" style={styles.sectionTitle}>当前库存</Text>
+          <View style={styles.stockGrid}>
+            {/* Display packaged stock by specification */}
+            {packagedStockBySize.length > 0 ? (
+              packagedStockBySize.map(({ packageSize, size, count }) => (
+                <View key={size} style={styles.stockItem}>
+                  <Text variant="bodyMedium" style={styles.stockLabel}>
+                    {size}g/包
+                  </Text>
+                  <Text variant="titleMedium" style={[styles.stockValue, {color: COLORS.success}]}>
+                    {count}包
+                  </Text>
+                </View>
+              ))
+            ) : (
+              <View style={styles.stockItem}>
+                <Text variant="bodyMedium" style={styles.stockLabel}>
+                  包装
                 </Text>
-              ))}
+                <Text variant="titleMedium" style={[styles.stockValue, {color: COLORS.success}]}>
+                  {selectedMedicine.packagedStock}{selectedMedicine.packageUnit}
+                </Text>
+              </View>
+            )}
+            <View style={styles.stockItem}>
+              <Text variant="bodyMedium" style={styles.stockLabel}>
+                散装
+              </Text>
+              <Text variant="titleMedium" style={[styles.stockValue, {color: COLORS.success}]}>
+                {selectedMedicine.looseStock}{selectedMedicine.baseUnit}
+              </Text>
             </View>
-          ) : (
-            <Text variant="bodyMedium" style={styles.stockLabel}>
-              包装库存: {selectedMedicine.packagedStock}{selectedMedicine.packageUnit}
-            </Text>
-          )}
+          </View>
         </View>
 
-        <Divider />
+        <Divider style={styles.divider} />
 
         {/* Outbound Mode Selection */}
         <View style={styles.section}>
-          <Text variant="titleMedium" style={styles.sectionTitle}>
-            出库模式
-          </Text>
+          <Text variant="titleMedium" style={styles.sectionTitle}>出库模式</Text>
           <SegmentedButtons
             value={outboundMode}
-            onValueChange={(value) => setOutboundMode(value as 'simple' | 'smart')}
+            onValueChange={(value) => setOutboundMode(value as OutboundMode)}
             buttons={[
               {
-                label: '简单模式',
+                label: '手动选择',
                 value: 'simple',
+                style: outboundMode === 'simple' && styles.activeSegment,
               },
               {
-                label: '智能模式',
+                label: '智能出库',
                 value: 'smart',
+                style: outboundMode === 'smart' && styles.activeSegmentOrange,
               },
             ]}
             style={styles.segmentedButtons}
           />
           <Text variant="bodySmall" style={styles.modeDescription}>
             {outboundMode === 'simple'
-              ? '简单模式：手动选择出库类型（包装/散装）'
-              : '智能模式：自动计算最优包装组合，支持多规格混合出库'}
+              ? '手动选择出库类型（包装/散装）'
+              : '自动计算最优包装组合，支持多规格混合出库'}
           </Text>
         </View>
 
         {/* Stock Type Selection - Only show in simple mode */}
         {outboundMode === 'simple' && (
           <View style={styles.section}>
-            <Text variant="titleMedium" style={styles.sectionTitle}>
-              出库类型
-            </Text>
+            <Text variant="titleMedium" style={styles.sectionTitle}>出库类型</Text>
             <SegmentedButtons
               value={stockType}
               onValueChange={(value) => setStockType(value as 'packaged' | 'loose')}
@@ -303,11 +298,13 @@ export const OutboundForm: React.FC = () => {
                   label: `散装出库`,
                   value: 'loose',
                   disabled: selectedMedicine.looseStock === 0,
+                  style: stockType === 'loose' && styles.activeSegmentOrange,
                 },
                 {
                   label: `包装出库`,
                   value: 'packaged',
                   disabled: selectedMedicine.packagedStock === 0,
+                  style: stockType === 'packaged' && styles.activeSegmentOrange,
                 },
               ]}
               style={styles.segmentedButtons}
@@ -319,6 +316,7 @@ export const OutboundForm: React.FC = () => {
         <View style={styles.section}>
           <Text variant="titleMedium" style={styles.sectionTitle}>
             出库数量
+            {outboundMode === 'simple' && stockType === 'packaged' ? ' (包)' : ` (${selectedMedicine.baseUnit})`}
           </Text>
 
           <Text variant="bodySmall" style={styles.availableStock}>
@@ -329,14 +327,17 @@ export const OutboundForm: React.FC = () => {
             value={quantity}
             onChangeText={setQuantity}
             keyboardType="decimal-pad"
-            label="数量"
             mode="outlined"
             style={styles.input}
-            error={!stockAvailable && quantity !== '0'}
+            placeholder={outboundMode === 'smart' ? '输入出库克数' : '输入数量'}
+            placeholderTextColor={COLORS.textLight}
+            outlineColor={COLORS.border}
+            activeOutlineColor={COLORS.primary}
             autoFocus
+            selectTextOnFocus
+            error={!stockAvailable && outboundMode === 'simple' && quantity !== ''}
           />
 
-          {/* Quick Quantity Buttons */}
           <View style={styles.quickButtons}>
             {quickQuantities.slice(0, 3).map(q => (
               <Button
@@ -344,7 +345,8 @@ export const OutboundForm: React.FC = () => {
                 mode="outlined"
                 onPress={() => setQuantity(q)}
                 style={styles.quickButton}
-                compact>
+                textColor={COLORS.primary}
+                contentStyle={styles.quickButtonContent}>
                 {q}
               </Button>
             ))}
@@ -373,14 +375,15 @@ export const OutboundForm: React.FC = () => {
                     </Text>
                     {outboundPlan.items.map((item, index) => (
                       <Text key={index} variant="bodyMedium" style={styles.planItem}>
-                        {item.packageSize
-                          ? `• ${item.packageSize}g/包 × ${item.quantity}包`
-                          : `• ${item.quantity}g散装`}
+                        • {item.packageSize
+                          ? `${item.packageSize}g/包 × ${item.quantity}包 (${item.packageSize * item.quantity}g)`
+                          : `${item.quantity}g散装`}
                       </Text>
                     ))}
                     <Divider style={styles.planDivider} />
                     <Text variant="bodyMedium" style={styles.planTotal}>
                       总计: {outboundPlan.items.reduce((sum, i) => sum + i.quantityInBaseUnits, 0)}g
+                      {outboundPlan.needsUnpack ? ' (需拆包)' : ' (无需拆包)'}
                     </Text>
                   </Card.Content>
                 </Card>
@@ -402,7 +405,7 @@ export const OutboundForm: React.FC = () => {
             <Text variant="bodyMedium" style={styles.unitInfo}>
               {stockType === 'packaged'
                 ? `每包${selectedMedicine.packageSize}${selectedMedicine.baseUnit}`
-                : `散装单位`}
+                : '散装单位'}
             </Text>
           </View>
         )}
@@ -415,33 +418,47 @@ export const OutboundForm: React.FC = () => {
             label="备注（可选）"
             mode="outlined"
             multiline
-            numberOfLines={3}
-            style={styles.input}
-            keyboardType="default"
-            autoCorrect={true}
-            autoCapitalize="sentences"
+            numberOfLines={2}
+            style={styles.notesInput}
+            placeholder="添加备注信息"
+            placeholderTextColor={COLORS.textLight}
+            outlineColor={COLORS.border}
+            activeOutlineColor={COLORS.primary}
           />
         </View>
 
-        {/* Submit Button */}
-        <Button
-          mode="contained"
-          onPress={handleSubmit}
-          disabled={!isValid || loading}
-          loading={loading}
-          style={styles.submitButton}
-          contentStyle={styles.submitButtonContent}
-          buttonColor={
-            outboundMode === 'smart'
-              ? outboundPlan?.isFeasible
-                ? undefined
-                : theme.colors.error
-              : stockAvailable
-              ? undefined
-              : theme.colors.error
-          }>
-          确认出库
-        </Button>
+        {/* Submit Buttons */}
+        <View style={styles.buttonContainer}>
+          <Button
+            mode="outlined"
+            onPress={() => {
+              setQuantity('');
+              setNotes('');
+            }}
+            disabled={!quantity}
+            style={styles.cancelButton}
+            textColor={COLORS.textSecondary}>
+            清空
+          </Button>
+          <Button
+            mode="contained"
+            onPress={handleSubmit}
+            disabled={!isValid || loading}
+            loading={loading}
+            style={styles.submitButton}
+            buttonColor={
+              outboundMode === 'smart'
+                ? outboundPlan?.isFeasible
+                  ? COLORS.primary
+                  : COLORS.error
+                : stockAvailable
+                  ? COLORS.primary
+                  : COLORS.error
+            }
+            contentStyle={styles.submitButtonContent}>
+            确认出库
+          </Button>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -450,116 +467,183 @@ export const OutboundForm: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.white,
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    padding: 16,
+    padding: 20,
   },
+  // Empty state
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    padding: 40,
+    gap: 16,
+  },
+  emptyIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyIconText: {
+    fontSize: 36,
+  },
+  emptyTitle: {
+    fontWeight: '600',
+    color: COLORS.text,
+    marginBottom: 8,
   },
   emptyText: {
-    color: '#999',
+    color: COLORS.textSecondary,
+    textAlign: 'center',
   },
-  section: {
-    marginBottom: 24,
+  // Stock Info Section
+  stockInfoSection: {
+    marginBottom: 20,
   },
   sectionTitle: {
     fontWeight: '600',
-    marginBottom: 8,
+    color: COLORS.text,
+    marginBottom: 12,
   },
-  sectionSubtitle: {
-    color: '#666',
-    marginBottom: 4,
+  stockGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
   },
-  stockInfoRow: {
-    gap: 4,
+  stockItem: {
+    backgroundColor: COLORS.background,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    minWidth: 100,
+    alignItems: 'center',
   },
   stockLabel: {
-    color: '#666',
+    color: COLORS.textSecondary,
+    marginBottom: 4,
   },
-  packageSpecContainer: {
-    gap: 2,
+  stockValue: {
+    fontWeight: '600',
+    color: COLORS.success,
   },
-  packageSpecText: {
-    color: '#666',
-    marginLeft: 12,
-    fontSize: 12,
+  divider: {
+    marginVertical: 16,
   },
+  // Section
+  section: {
+    marginBottom: 20,
+  },
+  // Segmented Buttons
   segmentedButtons: {
-    marginBottom: 16,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  activeSegment: {
+    backgroundColor: COLORS.primary,
+  },
+  activeSegmentOrange: {
+    backgroundColor: COLORS.primary,
   },
   modeDescription: {
-    color: '#666',
+    color: COLORS.textSecondary,
     fontSize: 12,
     marginTop: 4,
   },
+  // Input
+  input: {
+    backgroundColor: COLORS.white,
+    marginBottom: 12,
+  },
   availableStock: {
-    color: '#00695C',
-    marginBottom: 8,
+    color: COLORS.success,
+    marginBottom: 12,
     fontWeight: '500',
   },
-  input: {
-    marginBottom: 8,
-  },
+  // Quick Buttons
   quickButtons: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
+    gap: 12,
+    marginTop: 12,
   },
   quickButton: {
     flex: 1,
+    borderColor: COLORS.primary,
+    borderRadius: 8,
   },
+  quickButtonContent: {
+    paddingVertical: 8,
+  },
+  // Warning
   warningContainer: {
     marginTop: 12,
     padding: 12,
     backgroundColor: '#FFEBEE',
-    borderRadius: 4,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#F44336',
+    borderColor: COLORS.error,
   },
   warningText: {
-    color: '#D32F2F',
+    color: COLORS.error,
     fontSize: 12,
   },
-  unitInfo: {
-    color: '#666',
-  },
+  // Smart Plan
   planPreviewContainer: {
     marginTop: 16,
   },
   planCard: {
-    backgroundColor: '#E8F5E9',
+    backgroundColor: COLORS.smartPlan,
     borderWidth: 1,
-    borderColor: '#4CAF50',
+    borderColor: COLORS.success,
+    borderRadius: 12,
   },
   planTitle: {
     fontWeight: '600',
+    color: '#1B5E20',
+    marginBottom: 12,
+  },
+  planItem: {
     marginBottom: 8,
     color: '#2E7D32',
   },
-  planItem: {
-    marginBottom: 4,
-    color: '#1B5E20',
-  },
   planDivider: {
-    marginTop: 8,
-    marginBottom: 8,
+    marginVertical: 8,
+    backgroundColor: '#A5D6A',
   },
   planTotal: {
     fontWeight: '600',
     color: '#1B5E20',
   },
+  // Unit Info
+  unitInfo: {
+    color: COLORS.textSecondary,
+  },
+  // Notes Input
+  notesInput: {
+    backgroundColor: COLORS.white,
+    minHeight: 60,
+  },
+  // Buttons
+  buttonContainer: {
+    flexDirection: 'row',
+    gap: 16,
+    marginTop: 24,
+  },
+  cancelButton: {
+    flex: 1,
+    borderRadius: 8,
+  },
   submitButton: {
-    marginTop: 8,
+    flex: 2,
+    borderRadius: 8,
   },
   submitButtonContent: {
-    paddingVertical: 8,
+    paddingVertical: 12,
   },
 });

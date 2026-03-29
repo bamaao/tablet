@@ -18,7 +18,8 @@ import {UnpackModal} from '@/components/forms/UnpackModal';
 import {VoiceBar} from '@/components/voice/VoiceBar';
 import {InventoryMode, MedicineCategory, UnitType} from '@/types';
 import {useAppSelector, useAppDispatch} from '@/store/hooks';
-import {selectCurrentMode, createMedicine} from '@/store/slices/inventorySlice';
+import {selectCurrentMode, createMedicine, selectMedicines} from '@/store/slices/inventorySlice';
+import {showToast, showError} from '@/store/slices/uiSlice';
 
 export const InventoryScreen: React.FC = () => {
   const theme = useTheme();
@@ -71,6 +72,7 @@ export const InventoryScreen: React.FC = () => {
   // Handle save new medicine
   const handleSaveMedicine = async () => {
     if (!newMedicineName.trim()) {
+      dispatch(showError({title: '错误', message: '请输入药品名称'}));
       return;
     }
 
@@ -79,20 +81,28 @@ export const InventoryScreen: React.FC = () => {
       ? MedicineCategory.CHINESE_HERB
       : MedicineCategory.WESTERN_MEDICINE;
 
-    // Dispatch createMedicine action
-    await dispatch(createMedicine({
-      name: newMedicineName.trim(),
-      category,
-      baseUnit: newMedicineType === 'chinese' ? 'g' : 'ml',
-      packageUnit: '包',
-      packageSize: newMedicineType === 'chinese' ? 500 : 100,
-      minStock: 1000,
-    }));
+    try {
+      // Dispatch createMedicine action
+      await dispatch(createMedicine({
+        name: newMedicineName.trim(),
+        category,
+        baseUnit: newMedicineType === 'chinese' ? 'g' : 'ml',
+        packageUnit: '包',
+        packageSize: newMedicineType === 'chinese' ? 500 : 100,
+        minStock: 1000,
+      })).unwrap();
 
-    // Close the form
-    setShowMedicineForm(false);
-    setNewMedicineName('');
-    setNewMedicineType('chinese');
+      // Show success message
+      dispatch(showToast(`已添加药品: ${newMedicineName.trim()}`));
+
+      // Close the form
+      setShowMedicineForm(false);
+      setNewMedicineName('');
+      setNewMedicineType('chinese');
+    } catch (error) {
+      // Show error message (e.g., duplicate medicine)
+      dispatch(showError({title: '添加失败', message: (error as Error).message}));
+    }
   };
 
   return (
