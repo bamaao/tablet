@@ -86,9 +86,7 @@ export const InboundForm: React.FC = () => {
 
   // Handle submit
   const handleSubmit = async () => {
-    console.log('handleSubmit called, isValid:', isValid, 'selectedMedicine:', selectedMedicine?.name, 'quantity:', quantity);
     if (!isValid || !selectedMedicine) {
-      console.log('Form validation failed or no medicine selected');
       return;
     }
 
@@ -225,10 +223,7 @@ export const InboundForm: React.FC = () => {
 
           <TextInput
             value={quantity}
-            onChangeText={(text) => {
-              console.log('Quantity changed:', text);
-              setQuantity(text);
-            }}
+            onChangeText={setQuantity}
             keyboardType="decimal-pad"
             mode="outlined"
             style={styles.input}
@@ -261,10 +256,7 @@ export const InboundForm: React.FC = () => {
 
           <TextInput
             value={packageSize}
-            onChangeText={(text) => {
-              console.log('PackageSize changed:', text);
-              setPackageSize(text);
-            }}
+            onChangeText={setPackageSize}
             keyboardType="number-pad"
             mode="outlined"
             style={styles.input}

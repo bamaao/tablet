@@ -169,8 +169,7 @@ export const PrescriptionScreen: React.FC = () => {
                 )}
                 onPress={() => handleSelectPrescription(prescription)}
                 onLongPress={() => {
-                  // Long press to show edit/delete options
-                  console.log('Long press on prescription:', prescription.id);
+                  /* TODO: 长按编辑/删除 */
                 }}
                 style={[
                   styles.listItem,
@@ -339,7 +338,7 @@ export const PrescriptionScreen: React.FC = () => {
         detail={renderPrescriptionDetails()}
       />
 
-      <VoiceBar />
+      <VoiceBar voiceContext="prescription" />
     </View>
   );
 };

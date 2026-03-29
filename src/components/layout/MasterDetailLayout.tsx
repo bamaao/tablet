@@ -12,8 +12,7 @@
  */
 
 import React from 'react';
-import {View, StyleSheet, DimensionValue} from 'react-native';
-import {useWindowDimensions} from '@/hooks';
+import {View, StyleSheet} from 'react-native';
 
 interface MasterDetailLayoutProps {
   /**
@@ -55,15 +54,12 @@ export const MasterDetailLayout: React.FC<MasterDetailLayoutProps> = ({
   padding = 16,
   style,
 }) => {
-  const {width} = useWindowDimensions();
-
-  const masterWidth: DimensionValue = `${masterRatio * 100}%`;
-  const detailWidth: DimensionValue = `${(1 - masterRatio) * 100 - gap / width}%`;
+  const detailFlex = Math.max(0.01, 1 - masterRatio);
 
   return (
-    <View style={[styles.container, {padding}, style]}>
-      <View style={[styles.panel, {width: masterWidth}]}>{master}</View>
-      <View style={[styles.panel, {width: detailWidth}]}>{detail}</View>
+    <View style={[styles.container, {padding, gap}, style]}>
+      <View style={[styles.panel, {flex: masterRatio, minWidth: 0}]}>{master}</View>
+      <View style={[styles.panel, {flex: detailFlex, minWidth: 0}]}>{detail}</View>
     </View>
   );
 };
@@ -119,10 +115,10 @@ export const ThreeColumnLayout: React.FC<ThreeColumnLayoutProps> = ({
   style,
 }) => {
   return (
-    <View style={[styles.container, styles.threeColumn, {padding}, style]}>
-      <View style={[styles.panel, {flex: ratios[0]}]}>{left}</View>
-      <View style={[styles.panel, {flex: ratios[1]}]}>{center}</View>
-      <View style={[styles.panel, {flex: ratios[2]}]}>{right}</View>
+    <View style={[styles.container, styles.threeColumn, {padding, gap}, style]}>
+      <View style={[styles.panel, {flex: ratios[0], minWidth: 0}]}>{left}</View>
+      <View style={[styles.panel, {flex: ratios[1], minWidth: 0}]}>{center}</View>
+      <View style={[styles.panel, {flex: ratios[2], minWidth: 0}]}>{right}</View>
     </View>
   );
 };

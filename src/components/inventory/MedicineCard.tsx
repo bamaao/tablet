@@ -5,31 +5,39 @@
  * * Redesigned according to UI prototype with improved visual hierarchy.
  */
 
-import React, {useMemo} from 'react';
+import React, {useMemo, useCallback, memo} from 'react';
 import {View, StyleSheet, GestureResponderEvent, TouchableOpacity} from 'react-native';
-import {Card, Text, Avatar, useTheme, IconButton} from 'react-native-paper';
+import {Text, useTheme, IconButton} from 'react-native-paper';
 import {Medicine as MedicineType} from '@/types';
 import {useAppSelector} from '@/store/hooks';
-import {selectPackagedStockBySize} from '@/store/slices/inventorySlice';
+import {selectPackagedStockBySize, selectCurrentMode} from '@/store/slices/inventorySlice';
+import {MODE_ACCENT} from '@/theme/inventoryDesign';
 
 interface MedicineCardProps {
   medicine: MedicineType;
   onPress?: (event: GestureResponderEvent) => void;
+  /** 列表场景传入：引用稳定，便于 React.memo */
+  onSelectId?: (id: string) => void;
   onLongPress?: (event: GestureResponderEvent) => void;
   onDelete?: () => void;
+  onDeleteId?: (id: string) => void;
   showStockWarning?: boolean;
   isSelected?: boolean;
 }
 
-export const MedicineCard: React.FC<MedicineCardProps> = ({
+const MedicineCardInner: React.FC<MedicineCardProps> = ({
   medicine,
   onPress,
+  onSelectId,
   onLongPress,
   onDelete,
+  onDeleteId,
   showStockWarning = false,
   isSelected = false,
 }) => {
   const theme = useTheme();
+  const currentMode = useAppSelector(selectCurrentMode);
+  const selectionAccent = MODE_ACCENT[currentMode] ?? theme.colors.primary;
 
   // Get packaged stock grouped by size
   const packagedStockBySize = useAppSelector(state =>
@@ -108,18 +116,49 @@ export const MedicineCard: React.FC<MedicineCardProps> = ({
   const categoryColor = getCategoryColor();
   const stockColor = getStockStatusColor();
 
+  const handleCardPress = useCallback(
+    (e: GestureResponderEvent) => {
+      if (onSelectId) {
+        onSelectId(medicine.id);
+      } else {
+        onPress?.(e);
+      }
+    },
+    [onSelectId, onPress, medicine.id],
+  );
+
+  const handleDeletePress = useCallback(() => {
+    if (onDeleteId) {
+      onDeleteId(medicine.id);
+    } else {
+      onDelete?.();
+    }
+  }, [onDeleteId, onDelete, medicine.id]);
+
   return (
     <TouchableOpacity
-      onPress={onPress}
+      onPress={handleCardPress}
       onLongPress={onLongPress}
       activeOpacity={0.7}
       style={[
         styles.cardContainer,
         isSelected && styles.selectedCardContainer,
       ]}>
-      <View style={[styles.card, isSelected && styles.selectedCard]}>
+      <View
+        style={[
+          styles.card,
+          isSelected && styles.selectedCard,
+          isSelected && {
+            borderColor: selectionAccent,
+            backgroundColor: '#F7FBFA',
+          },
+        ]}>
         {/* Left: Medicine Icon */}
-        <View style={[styles.medicineIcon, {backgroundColor: isSelected ? '#FF6600' : categoryColor + '20'}]}>
+        <View
+          style={[
+            styles.medicineIcon,
+            {backgroundColor: isSelected ? selectionAccent : categoryColor + '20'},
+          ]}>
           <Text style={[styles.medicineIconText, {color: isSelected ? '#FFFFFF' : categoryColor}]}>
             {medicine.name.charAt(0)}
           </Text>
@@ -143,11 +182,11 @@ export const MedicineCard: React.FC<MedicineCardProps> = ({
         </View>
 
         {/* Delete Button (shown on hover/long press) */}
-        {onDelete && (
+        {(onDelete || onDeleteId) && (
           <IconButton
             icon="delete"
             size={16}
-            onPress={onDelete}
+            onPress={handleDeletePress}
             style={styles.deleteButton}
             iconColor="#F44336"
           />
@@ -155,10 +194,15 @@ export const MedicineCard: React.FC<MedicineCardProps> = ({
       </View>
 
       {/* Selected Indicator */}
-      {isSelected && <View style={styles.selectedIndicator} />}
+      {isSelected && (
+        <View style={[styles.selectedIndicator, {backgroundColor: selectionAccent}]} />
+      )}
     </TouchableOpacity>
   );
 };
+
+export const MedicineCard = memo(MedicineCardInner);
+MedicineCard.displayName = 'MedicineCard';
 
 const styles = StyleSheet.create({
   cardContainer: {
@@ -180,8 +224,7 @@ const styles = StyleSheet.create({
     borderColor: '#E0E0E0',
   },
   selectedCard: {
-    backgroundColor: '#FFF3E0',
-    borderColor: '#FF6600',
+    backgroundColor: '#F5F9F8',
     borderWidth: 2,
   },
   medicineIcon: {
@@ -230,7 +273,6 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     width: 4,
-    backgroundColor: '#FF6600',
     borderTopLeftRadius: 8,
     borderBottomLeftRadius: 8,
   },

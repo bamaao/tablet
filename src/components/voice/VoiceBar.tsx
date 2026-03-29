@@ -5,7 +5,7 @@
  * Always visible at the bottom of the screen for voice-first interaction.
  */
 
-import React, {useState, useEffect, useCallback} from 'react';
+import React, {useState, useEffect, useCallback, useMemo} from 'react';
 import {
   View,
   StyleSheet,
@@ -23,19 +23,46 @@ import {
   setError,
   selectIsListening,
   selectTranscript,
-  selectPermissionGranted,
 } from '@/store/slices/voiceSlice';
 import {parseVoiceCommand} from '@/utils/voice/CommandParser';
 import {VoiceService} from '@/services/VoiceService';
 import {TTSService} from '@/services/TTSService';
+import {selectCurrentMode} from '@/store/slices/inventorySlice';
+import {BRAND_TEAL, MODE_ACCENT, VOICE_HINT_BY_MODE} from '@/theme/inventoryDesign';
 
-export const VoiceBar: React.FC = () => {
+export type VoiceBarContext = 'inventory' | 'audit' | 'prescription';
+
+export interface VoiceBarProps {
+  /** Inventory tab uses Redux operation mode; other tabs use fixed hint/accent. */
+  voiceContext?: VoiceBarContext;
+}
+
+export const VoiceBar: React.FC<VoiceBarProps> = ({voiceContext = 'inventory'}) => {
   const theme = useTheme();
   const dispatch = useAppDispatch();
 
   const isListening = useAppSelector(selectIsListening);
   const transcript = useAppSelector(selectTranscript);
-  const permissionGranted = useAppSelector(selectPermissionGranted);
+  const currentMode = useAppSelector(selectCurrentMode);
+
+  const {modeAccent, voiceHint} = useMemo(() => {
+    if (voiceContext === 'audit') {
+      return {
+        modeAccent: BRAND_TEAL,
+        voiceHint: '说「盘点当归实盘 500 克」开始操作',
+      };
+    }
+    if (voiceContext === 'prescription') {
+      return {
+        modeAccent: '#6A1B9A',
+        voiceHint: '说「按补中益气汤抓 7 付」开始操作',
+      };
+    }
+    return {
+      modeAccent: MODE_ACCENT[currentMode],
+      voiceHint: VOICE_HINT_BY_MODE[currentMode],
+    };
+  }, [voiceContext, currentMode]);
 
   const [pulseAnim] = useState(new Animated.Value(1));
 
@@ -138,13 +165,22 @@ export const VoiceBar: React.FC = () => {
     <View style={[styles.container, {backgroundColor: theme.colors.surface}]}>
       {/* Transcript Display */}
       <View style={styles.transcriptContainer}>
-        {transcript ? (
+        {!transcript && !isListening ? (
+          <>
+            <Text variant="labelLarge" style={[styles.readyLabel, {color: modeAccent}]}>
+              语音控制已就绪
+            </Text>
+            <Text variant="bodyMedium" style={styles.placeholder}>
+              {voiceHint}
+            </Text>
+          </>
+        ) : transcript ? (
           <Text variant="bodyLarge" style={styles.transcript}>
             {transcript}
           </Text>
         ) : (
           <Text variant="bodyMedium" style={styles.placeholder}>
-            点击麦克风说话...
+            等待语音指令…
           </Text>
         )}
       </View>
@@ -158,7 +194,7 @@ export const VoiceBar: React.FC = () => {
               style={[
                 styles.pulseBackground,
                 {
-                  backgroundColor: theme.colors.primary + '40',
+                  backgroundColor: `${modeAccent}40`,
                   transform: [{scale: pulseAnim}],
                 },
               ]}
@@ -175,9 +211,7 @@ export const VoiceBar: React.FC = () => {
           style={({pressed}) => [
             styles.micButton,
             {
-              backgroundColor: isListening
-                ? theme.colors.error
-                : theme.colors.primaryContainer,
+              backgroundColor: isListening ? theme.colors.error : modeAccent,
             },
             pressed && styles.pressed,
           ]}
@@ -186,7 +220,7 @@ export const VoiceBar: React.FC = () => {
           <Icon
             name={isListening ? 'stop-circle' : 'microphone'}
             size={32}
-            color={isListening ? '#FFFFFF' : theme.colors.primary}
+            color="#FFFFFF"
           />
         </Pressable>
       </View>
@@ -229,6 +263,10 @@ const styles = StyleSheet.create({
   },
   placeholder: {
     color: '#999',
+    marginTop: 4,
+  },
+  readyLabel: {
+    fontWeight: '600',
   },
   buttonContainer: {
     position: 'relative',

@@ -68,9 +68,7 @@ export const MedicineForm: React.FC<MedicineFormProps> = ({
 
   // Handle submit
   const handleSubmit = async () => {
-    console.log('handleSubmit called, isValid:', isValid, { name: name.trim(), packageSize, minStock });
     if (!isValid) {
-      console.log('Form validation failed');
       return;
     }
 

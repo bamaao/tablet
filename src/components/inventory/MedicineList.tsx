@@ -5,7 +5,7 @@
  * Redesigned according to UI prototype: search + category tabs + medicine cards.
  */
 
-import React, {useState, useCallback, useEffect} from 'react';
+import React, {useState, useCallback, useEffect, useRef} from 'react';
 import {View, StyleSheet, ListRenderItem, Alert, TouchableOpacity} from 'react-native';
 import {Text, Searchbar, ProgressBar, Button, SegmentedButtons} from 'react-native-paper';
 import {FlashList} from '@shopify/flash-list';
@@ -18,8 +18,10 @@ import {
   selectMedicines,
   selectInventoryLoading,
   selectSelectedMedicine,
+  selectCurrentMode,
   deleteMedicine,
 } from '@/store/slices/inventorySlice';
+import {BRAND_TEAL, MODE_ACCENT} from '@/theme/inventoryDesign';
 import {showToast, showError} from '@/store/slices/uiSlice';
 
 type CategoryFilter = 'all' | 'chinese' | 'western';
@@ -62,6 +64,8 @@ export const MedicineList: React.FC<MedicineListProps> = ({
   const medicines = useAppSelector(selectMedicines);
   const loading = useAppSelector(selectInventoryLoading);
   const selectedMedicine = useAppSelector(selectSelectedMedicine);
+  const currentMode = useAppSelector(selectCurrentMode);
+  const listAccent = MODE_ACCENT[currentMode];
 
   const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
@@ -99,6 +103,9 @@ export const MedicineList: React.FC<MedicineListProps> = ({
     return result;
   }, [medicines, searchQuery, categoryFilter, showLowStockOnly]);
 
+  const listDataRef = useRef<MedicineType[]>([]);
+  listDataRef.current = filteredMedicines;
+
   // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -112,11 +119,20 @@ export const MedicineList: React.FC<MedicineListProps> = ({
 
   const handleMedicinePress = useCallback(
     (medicine: MedicineType) => {
-      console.log('Medicine pressed:', medicine.name, medicine.id);
       dispatch(selectMedicine(medicine));
       onMedicineSelect?.(medicine);
     },
     [dispatch, onMedicineSelect],
+  );
+
+  const handleSelectById = useCallback(
+    (id: string) => {
+      const m = listDataRef.current.find(x => x.id === id);
+      if (m) {
+        handleMedicinePress(m);
+      }
+    },
+    [handleMedicinePress],
   );
 
   const handleDeleteMedicine = useCallback(
@@ -147,20 +163,30 @@ export const MedicineList: React.FC<MedicineListProps> = ({
     [dispatch],
   );
 
+  const handleDeleteById = useCallback(
+    (id: string) => {
+      const m = listDataRef.current.find(x => x.id === id);
+      if (m) {
+        handleDeleteMedicine(m);
+      }
+    },
+    [handleDeleteMedicine],
+  );
+
   const renderItem: ListRenderItem<MedicineType> = useCallback(
     ({item}) => {
       const isSelected = selectedMedicine?.id === item.id;
       return (
         <MedicineCard
           medicine={item}
-          onPress={() => handleMedicinePress(item)}
+          onSelectId={handleSelectById}
+          onDeleteId={handleDeleteById}
           showStockWarning={item.currentStock < item.minStock}
-          onDelete={() => handleDeleteMedicine(item)}
           isSelected={isSelected}
         />
       );
     },
-    [handleMedicinePress, handleDeleteMedicine, selectedMedicine],
+    [handleSelectById, handleDeleteById, selectedMedicine?.id],
   );
 
   const getKey = useCallback((item: MedicineType) => item.id, []);
@@ -168,7 +194,7 @@ export const MedicineList: React.FC<MedicineListProps> = ({
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ProgressBar indeterminate color="#FF6600" />
+        <ProgressBar indeterminate color={listAccent} />
         <Text style={styles.loadingText}>加载中...</Text>
       </View>
     );
@@ -179,7 +205,7 @@ export const MedicineList: React.FC<MedicineListProps> = ({
       {/* Search Bar */}
       <View style={styles.searchContainer}>
         <Searchbar
-          placeholder="搜索药品..."
+          placeholder="搜索药品名称..."
           value={searchQuery}
           onChangeText={setSearchQuery}
           style={styles.searchbar}
@@ -221,7 +247,7 @@ export const MedicineList: React.FC<MedicineListProps> = ({
           style={styles.categoryButtons}
           theme={{
             colors: {
-              secondaryContainer: '#FF6600',
+              secondaryContainer: BRAND_TEAL,
               onSecondaryContainer: '#FFFFFF',
             },
           }}
@@ -245,6 +271,7 @@ export const MedicineList: React.FC<MedicineListProps> = ({
           renderItem={renderItem}
           keyExtractor={getKey}
           estimatedItemSize={80}
+          extraData={`${selectedMedicine?.id ?? ''}-${currentMode}`}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={true}
         />
@@ -299,7 +326,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#FF6600',
+    backgroundColor: BRAND_TEAL,
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 2,
@@ -324,7 +351,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   activeCategoryButton: {
-    backgroundColor: '#FF6600',
+    backgroundColor: BRAND_TEAL,
   },
   // List
   listContent: {

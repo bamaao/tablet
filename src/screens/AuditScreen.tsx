@@ -188,7 +188,7 @@ export const AuditScreen: React.FC = () => {
       </View>
 
       {/* Voice Bar */}
-      <VoiceBar />
+      <VoiceBar voiceContext="audit" />
 
       {/* Complete Audit FAB */}
       {currentSession && currentSession.status === 'IN_PROGRESS' && (

@@ -5,6 +5,7 @@
  */
 
 export {useWindowDimensions} from './useWindowDimensions';
+export {useTabletLayout} from './useTabletLayout';
 export {useMedicineUnit} from './useMedicineUnit';
 export {useVoiceCommand} from './useVoiceCommand';
 export {useInventoryCalculation} from './useInventoryCalculation';

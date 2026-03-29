@@ -7,7 +7,7 @@
 
 import React, {useState} from 'react';
 import {View, StyleSheet, ScrollView} from 'react-native';
-import {Text, Button, useTheme, IconButton, TextInput, SegmentedButtons} from 'react-native-paper';
+import {Text, Button, useTheme, IconButton, TextInput, SegmentedButtons, Avatar} from 'react-native-paper';
 import {MasterDetailLayout} from '@/components/layout/MasterDetailLayout';
 import {ModeSegmentedControl} from '@/components/layout/ModeSegmentedControl';
 import {MedicineList} from '@/components/inventory/MedicineList';
@@ -20,6 +20,7 @@ import {InventoryMode, MedicineCategory, UnitType} from '@/types';
 import {useAppSelector, useAppDispatch} from '@/store/hooks';
 import {selectCurrentMode, createMedicine, selectMedicines} from '@/store/slices/inventorySlice';
 import {showToast, showError} from '@/store/slices/uiSlice';
+import {formatTabletHeaderDate} from '@/theme/inventoryDesign';
 
 export const InventoryScreen: React.FC = () => {
   const theme = useTheme();
@@ -114,17 +115,23 @@ export const InventoryScreen: React.FC = () => {
         </View>
         <Button
           mode="contained"
-          onPress={() => {
-            console.log('Add button pressed, showMedicineForm:', showMedicineForm);
-            setShowMedicineForm(true);
-            console.log('After setShowMedicineForm(true)');
-          }}
+          onPress={() => setShowMedicineForm(true)}
           style={styles.addButton}
           buttonColor={theme.colors.primary}
           icon="plus"
           contentStyle={styles.addButtonContent}>
           添加
         </Button>
+        <Text variant="bodySmall" style={styles.headerDate}>
+          {formatTabletHeaderDate()}
+        </Text>
+        <Avatar.Text
+          size={36}
+          label="李"
+          style={styles.headerAvatar}
+          color="#FFFFFF"
+          labelStyle={styles.headerAvatarLabel}
+        />
       </View>
 
       {/* Main Content */}
@@ -151,14 +158,7 @@ export const InventoryScreen: React.FC = () => {
             {/* Header */}
             <View style={styles.modalHeader}>
               <Text variant="headlineMedium">添加新药品</Text>
-              <IconButton
-                icon="close"
-                size={24}
-                onPress={() => {
-                  console.log('Close button pressed');
-                  setShowMedicineForm(false);
-                }}
-              />
+              <IconButton icon="close" size={24} onPress={() => setShowMedicineForm(false)} />
             </View>
 
             {/* Form Content */}
@@ -216,12 +216,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E0E0E0',
+    gap: 8,
   },
   modeSelectorContainer: {
     flex: 1,
+    minWidth: 0,
+  },
+  headerDate: {
+    color: '#666666',
+    marginLeft: 4,
+    flexShrink: 0,
+  },
+  headerAvatar: {
+    backgroundColor: '#12968B',
+    marginLeft: 4,
+  },
+  headerAvatarLabel: {
+    fontSize: 16,
+    fontWeight: '600',
   },
   addButton: {
-    marginLeft: 8,
+    marginLeft: 0,
   },
   addButtonContent: {
     paddingHorizontal: 12,

@@ -11,6 +11,7 @@ import {SegmentedButtons, useTheme} from 'react-native-paper';
 import {InventoryMode} from '@/types';
 import {useAppDispatch, useAppSelector} from '@/store/hooks';
 import {setMode} from '@/store/slices/inventorySlice';
+import {MODE_ACCENT} from '@/theme/inventoryDesign';
 
 const MODES = [
   {label: '入库', value: InventoryMode.INBOUND},
@@ -23,6 +24,7 @@ export const ModeSegmentedControl: React.FC = () => {
   const theme = useTheme();
   const dispatch = useAppDispatch();
   const currentMode = useAppSelector(selectCurrentMode);
+  const modeAccent = MODE_ACCENT[currentMode];
 
   const handleModeChange = (value: string) => {
     dispatch(setMode(value as InventoryMode));
@@ -38,7 +40,14 @@ export const ModeSegmentedControl: React.FC = () => {
           value: mode.value,
         }))}
         style={styles.segmentedButtons}
-        theme={theme}
+        theme={{
+          ...theme,
+          colors: {
+            ...theme.colors,
+            secondaryContainer: modeAccent,
+            onSecondaryContainer: '#FFFFFF',
+          },
+        }}
       />
     </View>
   );

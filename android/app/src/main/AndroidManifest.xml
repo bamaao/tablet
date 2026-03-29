@@ -1,6 +1,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.medicalinventory">
 
+    <!-- 面向平板大屏；仍允许手机安装（未使用 requiresSmallestWidthDp 过滤） -->
+    <supports-screens
+        android:smallScreens="true"
+        android:normalScreens="true"
+        android:largeScreens="true"
+        android:xlargeScreens="true"
+        android:anyDensity="true" />
+
+    <!-- 语音非必选，避免无麦克风设备被应用商店误伤 -->
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
+
     <!-- Permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
@@ -23,6 +36,7 @@
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
             android:screenOrientation="landscape"
+            android:resizeableActivity="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
